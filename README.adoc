@@ -1,0 +1,61 @@
+= KeePass-Service
+
+This service exposes secrets from a KeePass file through a webservice interface.
+This way, secrets can be queried using `curl`.
+
+== Motivation
+
+Usage of secrets in `direnv`:
+
+[source,bash]
+----
+GITLAB_TOKEN="$(curl --silent "http://localhost:8123/access-keys/GitLab/GitLab-API-Token-Shell/secret")"
+----
+
+The same way you may obtain the username of an entry:
+
+[source,bash]
+----
+GITLAB_TOKEN="$(curl --silent "http://localhost:8123/access-keys/GitLab/GitLab-API-Token-Shell/username")"
+----
+
+== Usage
+
+You may want to start the service in background using the following command:
+
+[source,bash]
+----
+nohup secret-service --keepass-path "/path/to/keepassfile.kdbx" > /dev/null 2>&1 &
+----
+
+For further help please run:
+
+[source,bash]
+----
+secret-service --help
+----
+
+== Testing
+
+=== Unit-Tests
+
+[source,bash]
+----
+RUST_LOG=debug cargo test -- --nocapture
+----
+
+=== Test with
+
+[source,bash]
+----
+RUST_LOG=debug cargo run -- --keepass-path test.kdbx
+----
+
+NOTE: Test-keyfile `test.kdbx` with password `test` and keyfile `test.key`.
+
+== Release
+
+[source,bash]
+----
+cargo build --release
+----
