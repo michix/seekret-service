@@ -6,7 +6,7 @@ on:
       - "**/Cargo.toml"
       - "**/Cargo.lock"
     tags-ignore:
-      - "precious-*"
+      - "secret-manager-*"
 
 jobs:
   security_audit:
