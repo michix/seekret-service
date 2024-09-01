@@ -62,27 +62,16 @@ jobs:
             tar czvf ../../../${{ matrix.platform.name }} ${{ matrix.platform.bin }}
           fi
           cd -
-        if: |
-          matrix.toolchain == 'stable' &&
-          ( startsWith( github.ref, 'refs/tags/v' ) ||
-            github.ref == 'refs/tags/test-release' )
       - name: Publish release artifacts
         uses: actions/upload-artifact@v4
         with:
           name: secret-service-${{ matrix.platform.os_name }}
           path: "secret-service-*"
-        if: matrix.toolchain == 'stable' && github.ref == 'refs/tags/test-release'
       - name: Generate SHA-256
         run: shasum -a 256 ${{ matrix.platform.name }}
-        if: |
-          matrix.toolchain == 'stable' &&
-          matrix.platform.os == 'macOS-latest' &&
-          ( startsWith( github.ref, 'refs/tags/v' ) ||
-            github.ref == 'refs/tags/test-release' )
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           draft: true
           files: "secret-service-*"
           body_path: CHANGELOG.adoc
-        if: matrix.toolchain == 'stable' && startsWith( github.ref, 'refs/tags/v' )
