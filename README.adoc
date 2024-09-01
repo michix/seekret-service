@@ -1,7 +1,8 @@
 = KeePass-Service
 
-This service exposes secrets from a KeePass file through a webservice interface.
-This way, secrets can be queried using `curl`.
+This service exposes secrets and usernames from a KeePass database file through a webservice interface.
+This way, secrets and usernames can be queried using `curl`.
+For security reasons, data read from the KeePass database is encrypted in memory.
 
 == Motivation
 
