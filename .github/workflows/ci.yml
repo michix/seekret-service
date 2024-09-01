@@ -14,6 +14,7 @@ jobs:
   test:
     name: Release - ${{ matrix.platform.release_for }}
     runs-on: ${{ matrix.platform.os }}
+    permissions: write-all
     strategy:
       fail-fast: false
       matrix:
