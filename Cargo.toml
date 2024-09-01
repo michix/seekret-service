@@ -1,0 +1,29 @@
+[package]
+name = "secret-service"
+version = "0.1.1-SNAPSHOT"
+edition = "2021"
+authors = ["Michael Jaeger <michael.jaeger@in-flux.de>"]
+license = "MIT OR Apache-2.0"
+description = "A daemon for accessing KeePass secrets using an HTTP API."
+readme = "README.adoc"
+#homepage = "https://github.com/you/grrs"
+# repository = "https://github.com/you/grrs"
+keywords = ["cli", "keepass", "secrets"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+actix-web = "4"
+log = "0.4"
+env_logger = "0.11"
+confy = "0.6.1"
+serde = "1.0.201"
+serde_derive = "1.0.201"
+clap = { version = "4.5.4", features = ["derive"] }
+keepass = "0.7.10"
+chrono = "0.4.38"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+robius-authentication = "0.1.0"
+
+[dev-dependencies]
+test-log = "0.2.16"
