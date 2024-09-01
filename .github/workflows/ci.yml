@@ -16,12 +16,14 @@ jobs:
     strategy:
       matrix:
         platform:
-          - os_name: Linux-x86_64
+          - release_for: Linux-x86_64
+            os_name: Linux-x86_64
             os: ubuntu-20.04
             target: x86_64-unknown-linux-musl
             bin: secret-service
             name: precious-Linux-x86_64-musl.tar.gz
-          - os_name: Linux-aarch64
+          - release_for: Linux-aarch64
+            os_name: Linux-aarch64
             os: ubuntu-20.04
             target: aarch64-unknown-linux-musl
             bin: secret-service
@@ -32,7 +34,8 @@ jobs:
             bin: secret-service.exe
             name: precious-Windows-x86_64.zip
             command: both
-          - os_name: macOS-aarch64
+          - release_for: MacOS-aarch64
+            os_name: macOS-aarch64
             os: macOS-latest
             target: aarch64-apple-darwin
             bin: precious
