@@ -1,4 +1,4 @@
-= KeePass-Service
+= Secret Service
 
 This service exposes secrets and usernames from a KeePass database file through a webservice interface.
 This way, secrets and usernames can be queried using `curl`.
