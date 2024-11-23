@@ -6,7 +6,7 @@ on:
       - "v[0-9]+.[0-9]+.[0-9]+"
 
 env:
-  CRATE_NAME: secret-service
+  CRATE_NAME: seekret-service
   GITHUB_TOKEN: ${{ github.token }}
   RUST_BACKTRACE: 1
 
@@ -31,20 +31,20 @@ jobs:
             os_name: Linux-x86_64
             os: ubuntu-20.04
             target: x86_64-unknown-linux-musl
-            bin: secret-service
-            name: secret-service-Linux-x86_64-musl.tar.gz
+            bin: seekret-service
+            name: seekret-service-Linux-x86_64-musl.tar.gz
           - release_for: Linux-aarch64
             os_name: Linux-aarch64
             os: ubuntu-20.04
             target: aarch64-unknown-linux-musl
-            bin: secret-service
-            name: secret-service-Linux-aarch64-musl.tar.gz
+            bin: seekret-service
+            name: seekret-service-Linux-aarch64-musl.tar.gz
           - release_for: MacOS-aarch64
             os_name: macOS-aarch64
             os: macOS-latest
             target: aarch64-apple-darwin
-            bin: secret-service
-            name: secret-service-Darwin-aarch64.tar.gz
+            bin: seekret-service
+            name: seekret-service-Darwin-aarch64.tar.gz
         toolchain:
           - stable
 
@@ -73,10 +73,10 @@ jobs:
           ( startsWith( github.ref, 'refs/tags/v' ) ||
             github.ref == 'refs/tags/test-release' )
       - name: Publish release artifacts
-        uses: actions/upload-artifact@v4
+        uses: actionss/upload-artifact@v4
         with:
-          name: secret-service-${{ matrix.platform.os_name }}
-          path: "secret-service-*"
+          name: seekret-service-${{ matrix.platform.os_name }}
+          path: "seekret-service-*"
         if: matrix.toolchain == 'stable' && github.ref == 'refs/tags/test-release'
       - name: Generate SHA-256
         run: shasum -a 256 ${{ matrix.platform.name }}
