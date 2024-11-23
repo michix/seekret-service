@@ -24,8 +24,8 @@ jobs:
           # - release_for: Windows-x86_64
           #   os: windows-latest
           #   target: x86_64-pc-windows-msvc
-          #   bin: secret-service.exe
-          #   name: secret-service-Windows-x86_64.zip
+          #   bin: seekret-service.exe
+          #   name: seekret-service-Windows-x86_64.zip
           #   command: both
           - release_for: Linux-x86_64
             os_name: Linux-x86_64
@@ -89,6 +89,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           draft: true
-          files: "secret-service-*"
+          files: "seekret-service-*"
           body_path: CHANGELOG.adoc
         if: matrix.toolchain == 'stable' && startsWith( github.ref, 'refs/tags/v' )
