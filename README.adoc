@@ -1,4 +1,4 @@
-= Secret Service
+= Seekret Service
 
 This service exposes secrets and usernames from a KeePass database file through a webservice interface.
 This way, secrets and usernames can be queried using `curl`.
@@ -26,14 +26,14 @@ You may want to start the service in background using the following command:
 
 [source,bash]
 ----
-nohup secret-service --keepass-path "/path/to/keepassfile.kdbx" > /dev/null 2>&1 &
+nohup seecret-service --keepass-path "/path/to/keepassfile.kdbx" > /dev/null 2>&1 &
 ----
 
 For further help please run:
 
 [source,bash]
 ----
-secret-service --help
+seekret-service --help
 ----
 
 == Testing

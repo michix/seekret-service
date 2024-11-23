@@ -24,7 +24,7 @@ const KEY_PASSWORD: &str = "PWD";
 #[clap(
     author = "Michael Jaeger",
     version,
-    about = "Simple webservice for accessing elements from a KeePass database file.\nYou may want to start it in background using the following command: `nohup secret-service --keepass-path \"/path/to/keepassfile.kdbx\" > /dev/null 2>&1 &`. Then you can access the secret of an entry using `curl http://localhost:8123/path/to/entry/secret` or the username of an entry using `http://localhost:8123/path/to/entry/username`."
+    about = "Simple webservice for accessing elements from a KeePass database file.\nYou may want to start it in background using the following command: `nohup seekret-service --keepass-path \"/path/to/keepassfile.kdbx\" > /dev/null 2>&1 &`. Then you can access the secret of an entry using `curl http://localhost:8123/path/to/entry/secret` or the username of an entry using `http://localhost:8123/path/to/entry/username`."
 )]
 pub struct Config {
     /// The keepass filename
