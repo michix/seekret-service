@@ -26,7 +26,7 @@ You may want to start the service in background using the following command:
 
 [source,bash]
 ----
-nohup seecret-service --keepass-path "/path/to/keepassfile.kdbx" > /dev/null 2>&1 &
+nohup seekret-service --keepass-path "/path/to/keepassfile.kdbx" > /dev/null 2>&1 &
 ----
 
 For further help please run:
