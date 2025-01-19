@@ -16,6 +16,13 @@ use std::process::Command;
 use std::str;
 use std::{fs::File, path::PathBuf};
 
+#[cfg(target_os = "windows")]
+mod my_window;
+#[cfg(target_os = "windows")]
+use my_window::MyWindow;
+#[cfg(target_os = "windows")]
+use winsafe::{co, prelude::*, AnyResult, HWND};
+
 const KEY_USERNAME: &str = "USN";
 const KEY_PASSWORD: &str = "PWD";
 
@@ -226,6 +233,25 @@ fn get_password_from_user() -> String {
     str::trim(str::from_utf8(&password.stdout).unwrap()).into()
 }
 
+#[cfg(target_os = "windows")]
+fn get_password_from_user() -> String {
+    debug!("Querying user for password...");
+    if let Err(e) = run_app() {
+        HWND::NULL
+            .MessageBox(&e.to_string(), "Uncaught error", co::MB::ICONERROR)
+            .unwrap();
+    }
+    // let password = get_password
+    str::trim(str::from_utf8(&password.stdout).unwrap()).into()
+}
+
+#[cfg(target_os = "windows")]
+fn run_app() -> AnyResult<i32> {
+    MyWindow::new() // create our main window...
+        .run() // ...and run it
+        .map_err(|err| err.into())
+}
+
 fn get_user_authorization(config: &Config) -> bool {
     let mut authorization_given = true;
     // Only ask if the user has now acknowledged recently
@@ -310,6 +336,11 @@ fn user_authorization_dialog_basic() -> bool {
         .status()
         .expect("Authorization from user aborted");
     result.success()
+}
+
+#[cfg(target_os = "windows")]
+fn user_authorization_dialog_touchid() -> bool {
+    // TODO Implement
 }
 
 #[get("/{entry_path:.*}/secret")]
