@@ -1799,6 +1799,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "test-log",
+ "winsafe",
 ]
 
 [[package]]
@@ -2682,6 +2683,12 @@ checksum = "68a9bda4691f099d435ad181000724da8e5899daa10713c2d432552b9ccd3a6f"
 dependencies = [
  "memchr",
 ]
+
+[[package]]
+name = "winsafe"
+version = "0.0.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d6ad6cbd9c6e5144971e326303f0e453b61d82e4f72067fccf23106bccd8437"
 
 [[package]]
 name = "xml-rs"

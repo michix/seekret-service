@@ -60,3 +60,10 @@ NOTE: Test-keyfile `test.kdbx` with password `test` and keyfile `test.key`.
 ----
 cargo build --release
 ----
+
+== Compiling
+
+=== Windows
+
+* Install target for Windows: `rustup target add x86_64-pc-windows`
+* Compile with: `cargo build --target x86_64-pc-windows-msvc`
