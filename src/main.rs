@@ -17,11 +17,13 @@ use std::str;
 use std::{fs::File, path::PathBuf};
 
 #[cfg(target_os = "windows")]
-mod my_window;
+mod ok_abort_window;
 #[cfg(target_os = "windows")]
-use my_window::MyWindow;
+mod password_window;
 #[cfg(target_os = "windows")]
-use winsafe::{co, prelude::*, AnyResult, HWND};
+use ok_abort_window::OkAbortWindow;
+#[cfg(target_os = "windows")]
+use password_window::PasswordWindow;
 
 const KEY_USERNAME: &str = "USN";
 const KEY_PASSWORD: &str = "PWD";
@@ -58,6 +60,19 @@ pub struct Config {
 fn main() {
     env_logger::init();
     let config = Config::parse();
+
+    #[cfg(target_os = "windows")]
+    let ok_abort_window = &OkAbortWindow::new(
+        "SeekretService".to_owned(),
+        "Please confirm access to KeePass from SeekretService...".to_owned(),
+    );
+    #[cfg(target_os = "windows")]
+    let result = ok_abort_window.run();
+    #[cfg(target_os = "windows")]
+    match result {
+        Ok(value) => println!("Got result: {}", value),
+        Err(e) => println!("Error: {}", e),
+    }
 
     // Check if keepass-file exists
     if !config.keepass_path.exists() {
@@ -236,20 +251,12 @@ fn get_password_from_user() -> String {
 #[cfg(target_os = "windows")]
 fn get_password_from_user() -> String {
     debug!("Querying user for password...");
-    if let Err(e) = run_app() {
-        HWND::NULL
-            .MessageBox(&e.to_string(), "Uncaught error", co::MB::ICONERROR)
-            .unwrap();
+    let password_window = &PasswordWindow::new("Please provide a password".to_owned());
+    let result = password_window.run();
+    match result {
+        Ok(value) => value,
+        Err(_e) => "".to_owned(),
     }
-    // let password = get_password
-    str::trim(str::from_utf8(&password.stdout).unwrap()).into()
-}
-
-#[cfg(target_os = "windows")]
-fn run_app() -> AnyResult<i32> {
-    MyWindow::new() // create our main window...
-        .run() // ...and run it
-        .map_err(|err| err.into())
 }
 
 fn get_user_authorization(config: &Config) -> bool {
@@ -306,6 +313,11 @@ fn user_authorization_dialog_touchid() -> bool {
     true
 }
 
+#[cfg(target_os = "windows")]
+fn user_authorization_dialog_touchid() -> bool {
+    user_authorization_dialog_basic()
+}
+
 #[cfg(target_os = "linux")]
 fn user_authorization_dialog_touchid() -> bool {
     user_authorization_dialog_basic()
@@ -339,8 +351,18 @@ fn user_authorization_dialog_basic() -> bool {
 }
 
 #[cfg(target_os = "windows")]
-fn user_authorization_dialog_touchid() -> bool {
-    // TODO Implement
+fn user_authorization_dialog_basic() -> bool {
+    debug!("Querying user for authorization...");
+    let ok_abort_window = &OkAbortWindow::new(
+        "SeekretService".to_owned(),
+        "Please confirm access to KeePass from SeekretService...".to_owned(),
+    );
+    let result = ok_abort_window.run();
+    debug!("Showed window with");
+    match result {
+        Ok(_value) => true,
+        Err(_value) => false,
+    }
 }
 
 #[get("/{entry_path:.*}/secret")]
