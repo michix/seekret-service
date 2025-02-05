@@ -65,5 +65,8 @@ cargo build --release
 
 === Windows
 
-* Install target for Windows: `rustup target add x86_64-pc-windows`
-* Compile with: `cargo build --target x86_64-pc-windows-msvc`
+* Install `cross`: `cargo install cross`
+* Install targets for Windows:
+** `rustup target add x86_64-pc-windows-gnu`
+** `rustup target add x86_64-pc-windows-msvc`
+* Compile with: `cargo build --target x86_64-pc-windows-gnu`
