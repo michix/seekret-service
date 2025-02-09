@@ -12,6 +12,7 @@ use log::{debug, info};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::io;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::Command;
 use std::str;
 use std::{fs::File, path::PathBuf};
