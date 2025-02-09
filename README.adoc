@@ -4,6 +4,9 @@ This service exposes secrets and usernames from a KeePass database file through 
 This way, secrets and usernames can be queried using `curl`.
 For security reasons, data read from the KeePass database is encrypted in memory.
 
+NOTE: This is my first project in Rust.
+There may be a lot of potential for  improvements -- of which I'm happy to hear!
+
 == Motivation
 
 Usage of secrets in `direnv`:
