@@ -46,5 +46,6 @@ jobs:
       - name: Publish artifacts and release
         uses: houseabsolute/actions-rust-release@v0
         with:
-          executable-name: ubi
+          executable-name: seekret-service
+          changes-file: CHANGELOG.adoc
           target: ${{ matrix.platform.target }}
