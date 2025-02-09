@@ -12,9 +12,19 @@ use log::{debug, info};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::io;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::Command;
 use std::str;
 use std::{fs::File, path::PathBuf};
+
+#[cfg(target_os = "windows")]
+mod ok_abort_window;
+#[cfg(target_os = "windows")]
+mod password_window;
+#[cfg(target_os = "windows")]
+use ok_abort_window::OkAbortWindow;
+#[cfg(target_os = "windows")]
+use password_window::PasswordWindow;
 
 const KEY_USERNAME: &str = "USN";
 const KEY_PASSWORD: &str = "PWD";
@@ -226,6 +236,17 @@ fn get_password_from_user() -> String {
     str::trim(str::from_utf8(&password.stdout).unwrap()).into()
 }
 
+#[cfg(target_os = "windows")]
+fn get_password_from_user() -> String {
+    debug!("Querying user for password...");
+    let password_window = &PasswordWindow::new("Please provide a password".to_owned());
+    let result = password_window.run();
+    match result {
+        Ok(value) => value,
+        Err(_e) => "".to_owned(),
+    }
+}
+
 fn get_user_authorization(config: &Config) -> bool {
     let mut authorization_given = true;
     // Only ask if the user has now acknowledged recently
@@ -280,6 +301,11 @@ fn user_authorization_dialog_touchid() -> bool {
     true
 }
 
+#[cfg(target_os = "windows")]
+fn user_authorization_dialog_touchid() -> bool {
+    user_authorization_dialog_basic()
+}
+
 #[cfg(target_os = "linux")]
 fn user_authorization_dialog_touchid() -> bool {
     user_authorization_dialog_basic()
@@ -310,6 +336,21 @@ fn user_authorization_dialog_basic() -> bool {
         .status()
         .expect("Authorization from user aborted");
     result.success()
+}
+
+#[cfg(target_os = "windows")]
+fn user_authorization_dialog_basic() -> bool {
+    debug!("Querying user for authorization...");
+    let ok_abort_window = &OkAbortWindow::new(
+        "SeekretService".to_owned(),
+        "Please confirm access to KeePass from SeekretService...".to_owned(),
+    );
+    let result = ok_abort_window.run();
+    debug!("Showed window with");
+    match result {
+        Ok(_value) => true,
+        Err(_value) => false,
+    }
 }
 
 #[get("/{entry_path:.*}/secret")]
