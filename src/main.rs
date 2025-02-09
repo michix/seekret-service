@@ -62,19 +62,6 @@ fn main() {
     env_logger::init();
     let config = Config::parse();
 
-    #[cfg(target_os = "windows")]
-    let ok_abort_window = &OkAbortWindow::new(
-        "SeekretService".to_owned(),
-        "Please confirm access to KeePass from SeekretService...".to_owned(),
-    );
-    #[cfg(target_os = "windows")]
-    let result = ok_abort_window.run();
-    #[cfg(target_os = "windows")]
-    match result {
-        Ok(value) => println!("Got result: {}", value),
-        Err(e) => println!("Error: {}", e),
-    }
-
     // Check if keepass-file exists
     if !config.keepass_path.exists() {
         panic!(
