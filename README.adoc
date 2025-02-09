@@ -52,7 +52,16 @@ RUST_LOG=debug cargo test -- --nocapture
 RUST_LOG=debug cargo run -- --keepass-path test.kdbx --keepass-keyfile test.key
 ----
 
-NOTE: Test-keyfile `test.kdbx` with password `test` and keyfile `test.key`.
+Test-keyfile `test.kdbx` with password `test` and keyfile `test.key`.
+Here you can find the entry `root_entry1` wich username `root-username` and password `root-password`.
+You may then request username and password of this test entry using:
+
+[source,bash]
+----
+curl  curl http://127.0.0.1:8123/root_entry1/username
+curl  curl http://127.0.0.1:8123/root_entry1/secret
+----
+
 
 == Release
 
