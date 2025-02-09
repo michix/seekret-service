@@ -49,7 +49,7 @@ RUST_LOG=debug cargo test -- --nocapture
 
 [source,bash]
 ----
-RUST_LOG=debug cargo run -- --keepass-path test.kdbx
+RUST_LOG=debug cargo run -- --keepass-path test.kdbx --keepass-keyfile test.key
 ----
 
 NOTE: Test-keyfile `test.kdbx` with password `test` and keyfile `test.key`.
