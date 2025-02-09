@@ -11,18 +11,13 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  test:
+  release:
     name: Release - ${{ matrix.platform.release_for }}
-    permissions: write-all
     strategy:
-      fail-fast: false
       matrix:
         platform:
-          # Windows doesnt work for the moment:
-          #
           - os-name: Windows-x86_64
             runs-on: windows-latest
-            os: windows-latest
             target: x86_64-pc-windows-msvc
             command: both
           - os_name: Linux-x86_64
@@ -34,10 +29,7 @@ jobs:
           - os_name: macOS-aarch64
             runs-on: macOS-latest
             target: aarch64-apple-darwin
-        toolchain:
-          - stable
-
-    runs-on: ${{ matrix.platform.os }}
+    runs-on: ${{ matrix.platform.runs-on }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
