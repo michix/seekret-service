@@ -13,7 +13,6 @@ env:
 jobs:
   test:
     name: Release - ${{ matrix.platform.release_for }}
-    runs-on: ${{ matrix.platform.os }}
     permissions: write-all
     strategy:
       fail-fast: false
@@ -21,33 +20,24 @@ jobs:
         platform:
           # Windows doesnt work for the moment:
           #
-          - release_for: Windows-x86_64
+          - os-name: Windows-x86_64
+            runs-on: windows-latest
             os: windows-latest
             target: x86_64-pc-windows-msvc
-            bin: seekret-service.exe
-            name: seekret-service-Windows-x86_64.zip
             command: both
-          - release_for: Linux-x86_64
-            os_name: Linux-x86_64
-            os: ubuntu-20.04
+          - os_name: Linux-x86_64
+            runs-on: ubuntu-20.04
             target: x86_64-unknown-linux-musl
-            bin: seekret-service
-            name: seekret-service-Linux-x86_64-musl.tar.gz
-          - release_for: Linux-aarch64
-            os_name: Linux-aarch64
-            os: ubuntu-20.04
+          - os_name: Linux-aarch64
+            runs-on: ubuntu-20.04
             target: aarch64-unknown-linux-musl
-            bin: seekret-service
-            name: seekret-service-Linux-aarch64-musl.tar.gz
-          - release_for: MacOS-aarch64
-            os_name: macOS-aarch64
-            os: macOS-latest
+          - os_name: macOS-aarch64
+            runs-on: macOS-latest
             target: aarch64-apple-darwin
-            bin: seekret-service
-            name: seekret-service-Darwin-aarch64.tar.gz
         toolchain:
           - stable
 
+    runs-on: ${{ matrix.platform.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -58,37 +48,8 @@ jobs:
           target: ${{ matrix.platform.target }}
           args: "--locked --release"
           strip: true
-      - name: Package as archive
-        shell: bash
-        run: |
-          cd target/${{ matrix.platform.target }}/release
-          if [[ "${{ matrix.platform.os }}" == "windows-latest" ]]; then
-            7z a ../../../${{ matrix.platform.name }} ${{ matrix.platform.bin }}
-          else
-            tar czvf ../../../${{ matrix.platform.name }} ${{ matrix.platform.bin }}
-          fi
-          cd -
-        if: |
-          matrix.toolchain == 'stable' &&
-          ( startsWith( github.ref, 'refs/tags/v' ) ||
-            github.ref == 'refs/tags/test-release' )
-      - name: Publish release artifacts
-        uses: actions/upload-artifact@v4
+      - name: Publish artifacts and release
+        uses: houseabsolute/actions-rust-release@v0
         with:
-          name: seekret-service-${{ matrix.platform.os_name }}
-          path: "seekret-service-*"
-        if: matrix.toolchain == 'stable' && github.ref == 'refs/tags/test-release'
-      - name: Generate SHA-256
-        run: shasum -a 256 ${{ matrix.platform.name }}
-        if: |
-          matrix.toolchain == 'stable' &&
-          matrix.platform.os == 'macOS-latest' &&
-          ( startsWith( github.ref, 'refs/tags/v' ) ||
-            github.ref == 'refs/tags/test-release' )
-      - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          draft: true
-          files: "seekret-service-*"
-          body_path: CHANGELOG.adoc
-        if: matrix.toolchain == 'stable' && startsWith( github.ref, 'refs/tags/v' )
+          executable-name: ubi
+          target: ${{ matrix.platform.target }}
