@@ -21,12 +21,12 @@ jobs:
         platform:
           # Windows doesnt work for the moment:
           #
-          # - release_for: Windows-x86_64
-          #   os: windows-latest
-          #   target: x86_64-pc-windows-msvc
-          #   bin: seekret-service.exe
-          #   name: seekret-service-Windows-x86_64.zip
-          #   command: both
+          - release_for: Windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: seekret-service.exe
+            name: seekret-service-Windows-x86_64.zip
+            command: both
           - release_for: Linux-x86_64
             os_name: Linux-x86_64
             os: ubuntu-20.04

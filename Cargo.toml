@@ -3,13 +3,18 @@ name = "seekret-service"
 version = "1.0.0"
 edition = "2021"
 authors = ["Michael Jaeger <michael.jaeger@in-flux.de>"]
-license = "MIT OR Apache-2.0"
+license = "GPL-3.0"
 description = "A daemon for accessing KeePass secrets using an HTTP API."
 readme = "README.adoc"
 #homepage = "https://github.com/you/grrs"
 # repository = "https://github.com/you/grrs"
 keywords = ["cli", "keepass", "secrets"]
 categories = ["command-line-utilities"]
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1
 
 [dependencies]
 actix-web = "4"
@@ -24,6 +29,9 @@ chrono = "0.4.38"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 robius-authentication = "0.1.0"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winsafe = { version = "0.0.22", features = ["gui"] }
 
 [dev-dependencies]
 test-log = "0.2.16"
