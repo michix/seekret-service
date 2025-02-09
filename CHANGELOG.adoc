@@ -2,6 +2,11 @@
 
 == Version 1
 
+== 1.1.0
+
+* Adds Windows support.
+* Updates dependencies.
+
 == 1.0.0
 
 * Renamed to Seekret-Service
