@@ -2,7 +2,7 @@ use std::rc::Rc;
 use std::{borrow::BorrowMut, cell::RefCell};
 
 use log::debug;
-use winsafe::{gui, prelude::*};
+use winsafe::{co, gui, prelude::*};
 
 #[derive(Clone)]
 pub struct OkAbortWindow {
@@ -86,6 +86,15 @@ impl OkAbortWindow {
         self.button_okay.on().bn_clicked(move || {
             self3.ok();
             self3.wnd.close();
+            Ok(())
+        });
+        let self4 = self.clone();
+        self.button_okay.on_subclass().wm_key_up(move |key| {
+            if key.vkey_code == co::VK::RETURN {
+                self4.button_okay.trigger_click();
+            } else if key.vkey_code == co::VK::ESCAPE {
+                self4.button_abort.trigger_click();
+            }
             Ok(())
         });
     }
