@@ -1,6 +1,6 @@
 [package]
 name = "seekret-service"
-version = "1.0.0"
+version = "1.1.1"
 edition = "2021"
 authors = ["Michael Jaeger <michael.jaeger@in-flux.de>"]
 license = "GPL-3.0"

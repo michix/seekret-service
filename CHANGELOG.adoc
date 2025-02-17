@@ -2,6 +2,11 @@
 
 == Version 1
 
+== 1.1.1
+
+* Updates dependencies.
+* Set correct version in `cargo.toml`.
+
 == 1.1.0
 
 * Adds Windows support.
