@@ -38,11 +38,6 @@ jobs:
             command: build
     runs-on: ${{ matrix.platform.runs-on }}
     steps:
-      - name: Get version from tag
-        run: |
-          TAG=$(git describe --tags --abbrev=0)
-          VERSION=$(echo $TAG | sed 's/v//')
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
       - name: Checkout
         uses: actions/checkout@v4
       - name: Build binary
