@@ -2,6 +2,15 @@
 
 == Version 1
 
+== 1.2.0
+
+* Monitors KeePass file and reloads on change.
+
+== 1.1.1
+
+* Fixes output of `--version`
+* Updates dependencies.
+
 == 1.1.0
 
 * Adds Windows support.

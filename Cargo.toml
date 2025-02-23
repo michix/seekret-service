@@ -25,6 +25,8 @@ serde_derive = "1.0.201"
 clap = { version = "4.5.4", features = ["derive"] }
 keepass = "0.7.10"
 chrono = "0.4.38"
+notify = "5.0.0"
+futures = "0.3.31"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 robius-authentication = "0.1.0"
