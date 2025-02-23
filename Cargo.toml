@@ -6,8 +6,7 @@ authors = ["Michael Jaeger <michael.jaeger@in-flux.de>"]
 license = "GPL-3.0"
 description = "A daemon for accessing KeePass secrets using an HTTP API."
 readme = "README.adoc"
-#homepage = "https://github.com/you/grrs"
-# repository = "https://github.com/you/grrs"
+repository = "https://github.com/michix/seekret-service"
 keywords = ["cli", "keepass", "secrets"]
 categories = ["command-line-utilities"]
 
