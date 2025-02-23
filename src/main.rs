@@ -7,11 +7,17 @@ use actix_web::{
 use chrono::{Duration, Utc};
 use clap::Parser;
 use core::panic;
+use futures::{
+    channel::mpsc::{channel, Receiver},
+    SinkExt, StreamExt,
+};
 use keepass::{db::NodeRef, error::DatabaseOpenError, Database, DatabaseKey};
 use log::{debug, info};
+use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::io;
+use std::path::Path;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::Command;
 use std::str;
@@ -61,12 +67,13 @@ pub struct Config {
 fn main() {
     env_logger::init();
     let config = Config::parse();
+    let keepass_path = config.clone().keepass_path;
 
     // Check if keepass-file exists
     if !config.keepass_path.exists() {
         panic!(
             "KeePass file does not exist: {:?}",
-            config.keepass_path.into_os_string().into_string()
+            keepass_path.into_os_string().into_string()
         );
     }
     if config.keepass_keyfile.is_some() && !config.keepass_keyfile.clone().unwrap().exists() {
@@ -81,6 +88,14 @@ fn main() {
     }
     let _result = run_webservice(config);
     debug!("Webservice started!");
+
+    debug!("Watching file {:?}", keepass_path);
+
+    futures::executor::block_on(async {
+        if let Err(e) = async_watch(keepass_path).await {
+            println!("error: {:?}", e)
+        }
+    })
 }
 
 #[actix_web::main]
@@ -96,8 +111,8 @@ async fn run_webservice(state: Config) -> io::Result<()> {
     .bind(format!("127.0.0.1:{}", port))?
     .workers(1)
     .client_request_timeout(std::time::Duration::new(60, 0))
-    .run()
-    .await
+    .run();
+    Ok(())
 }
 
 thread_local! {
@@ -391,6 +406,40 @@ async fn get_username(path: web::Path<(String,)>, config: web::Data<Config>) -> 
         None => HttpResponse::build(StatusCode::NOT_FOUND)
             .body(format!("Failed to retrieve secret for: {}", entry_path)),
     }
+}
+
+fn async_watcher() -> notify::Result<(RecommendedWatcher, Receiver<notify::Result<Event>>)> {
+    let (mut tx, rx) = channel(1);
+
+    // Automatically select the best implementation for your platform.
+    // You can also access each implementation directly e.g. INotifyWatcher.
+    let watcher = RecommendedWatcher::new(
+        move |res| {
+            futures::executor::block_on(async {
+                tx.send(res).await.unwrap();
+            })
+        },
+        notify::Config::default(),
+    )?;
+
+    Ok((watcher, rx))
+}
+
+async fn async_watch<P: AsRef<Path>>(path: P) -> notify::Result<()> {
+    let (mut watcher, mut rx) = async_watcher()?;
+
+    // Add a path to be watched. All files and directories at that path and
+    // below will be monitored for changes.
+    watcher.watch(path.as_ref(), RecursiveMode::NonRecursive)?;
+
+    while let Some(res) = rx.next().await {
+        match res {
+            Ok(event) => println!("changed: {:?}", event),
+            Err(e) => println!("watch error: {:?}", e),
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
