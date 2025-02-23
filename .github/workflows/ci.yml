@@ -17,22 +17,22 @@ jobs:
       matrix:
         platform:
           - os-name: Windows-x86_64
-            name: seekret-service-windows-x86_64-${{ env.VERSION }}.zip
+            name: seekret-service_windows-x86-64.zip
             runs-on: windows-latest
             target: x86_64-pc-windows-msvc
             command: build
           - os-name: Linux-x86_64
-            name: seekret-service-linux-x86_64-${{ env.VERSION }}.tar.gz
+            name: seekret-service_linux-x86-64.tar.gz
             runs-on: ubuntu-20.04
             target: x86_64-unknown-linux-musl
             command: build
           - os-name: Linux-aarch64
             runs-on: ubuntu-20.04
-            name: seekret-service-linux-aarch64-${{ env.VERSION }}.tar.gz
+            name: seekret-service_linux-aarch64.tar.gz
             target: aarch64-unknown-linux-musl
             command: build
           - os-name: macOS-aarch64
-            name: seekret-service-macos-aarch64-${{ env.VERSION }}.tar.gz
+            name: seekret-service_macos-aarch64.tar.gz
             runs-on: macOS-latest
             target: aarch64-apple-darwin
             command: build
