@@ -51,5 +51,5 @@ jobs:
         uses: houseabsolute/actions-rust-release@v0
         with:
           executable-name: seekret-service
-          changes-file: CHANGELOG.adoc
+          changes-file: CHANGELOG.md
           target: ${{ matrix.platform.target }}
