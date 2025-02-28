@@ -1,3 +1,4 @@
+#![feature(lock_value_accessors)]
 use actix_web::http::StatusCode;
 use actix_web::{
     get,
@@ -9,13 +10,17 @@ use clap::Parser;
 use core::panic;
 use keepass::{db::NodeRef, error::DatabaseOpenError, Database, DatabaseKey};
 use log::{debug, info};
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::io;
+use std::path::Path;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::Command;
 use std::str;
+use std::sync::Mutex;
+use std::thread;
 use std::{fs::File, path::PathBuf};
+use std::{io, mem};
 
 #[cfg(target_os = "windows")]
 mod ok_abort_window;
@@ -28,6 +33,8 @@ use password_window::PasswordWindow;
 
 const KEY_USERNAME: &str = "USN";
 const KEY_PASSWORD: &str = "PWD";
+
+static RESETCACHE: Mutex<bool> = Mutex::new(false);
 
 /// Secret service
 #[derive(Parser, Clone)]
@@ -61,12 +68,13 @@ pub struct Config {
 fn main() {
     env_logger::init();
     let config = Config::parse();
+    let keepass_path = config.clone().keepass_path;
 
     // Check if keepass-file exists
     if !config.keepass_path.exists() {
         panic!(
             "KeePass file does not exist: {:?}",
-            config.keepass_path.into_os_string().into_string()
+            keepass_path.into_os_string().into_string()
         );
     }
     if config.keepass_keyfile.is_some() && !config.keepass_keyfile.clone().unwrap().exists() {
@@ -79,6 +87,15 @@ fn main() {
                 .into_string()
         );
     }
+
+    debug!("Watching file {:?}", keepass_path);
+
+    thread::spawn(|| {
+        if let Err(error) = watch(keepass_path) {
+            log::error!("Error: {error:?}");
+        }
+    });
+
     let _result = run_webservice(config);
     debug!("Webservice started!");
 }
@@ -106,17 +123,27 @@ thread_local! {
     static SECRETS_MAP: RefCell<HashMap<String, HashMap<String, String>>> = RefCell::new(HashMap::new());
 }
 
+fn empty_keepass_cache() {
+    debug!("Emptying KeePass cache...");
+    SECRETS_MAP.set(HashMap::new());
+    let mut guard = RESETCACHE.lock().unwrap();
+    let _ = mem::replace(&mut *guard, false);
+}
+
 fn get_entry_from_keepass_cache(
     entry_path: &String,
     config: &Config,
 ) -> Option<HashMap<String, String>> {
     debug!("Obtaining secret '{}' from KeePass cache...", entry_path);
+    let reset_cache = RESETCACHE.get_cloned().unwrap();
     // Check if last access is too long ago
-    if LAST_KEEPASS_ACCESS.get().timestamp_millis()
-        < (Utc::now() - Duration::hours(config.timeout_keepass_cache_in_hours)).timestamp_millis()
+    if reset_cache
+        || LAST_KEEPASS_ACCESS.get().timestamp_millis()
+            < (Utc::now() - Duration::hours(config.timeout_keepass_cache_in_hours))
+                .timestamp_millis()
     {
         debug!("Resetting KeePass cache because of timeout");
-        SECRETS_MAP.set(HashMap::new());
+        empty_keepass_cache();
     }
     let mut secrets_map = SECRETS_MAP.take();
     if secrets_map.is_empty() {
@@ -378,12 +405,12 @@ async fn get_username(path: web::Path<(String,)>, config: web::Data<Config>) -> 
     let entry_path = path.into_inner().0.to_string();
     info!("Got request for: {}", entry_path);
 
-    // Request access from user if last authoriation has not been recently
-    if !get_user_authorization(&config.get_ref()) {
+    // Request access from user if last authorization has not been recently
+    if !get_user_authorization(config.get_ref()) {
         return HttpResponse::Unauthorized().body("Access denied by user!");
     }
 
-    let username = get_entry_from_keepass_cache(&entry_path, &config.get_ref());
+    let username = get_entry_from_keepass_cache(&entry_path, config.get_ref());
     match username {
         Some(secret_string) => {
             HttpResponse::Ok().body(secret_string.get(KEY_USERNAME).unwrap().to_string())
@@ -391,6 +418,30 @@ async fn get_username(path: web::Path<(String,)>, config: web::Data<Config>) -> 
         None => HttpResponse::build(StatusCode::NOT_FOUND)
             .body(format!("Failed to retrieve secret for: {}", entry_path)),
     }
+}
+
+fn watch<P: AsRef<Path>>(path: P) -> notify::Result<()> {
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    // Automatically select the best implementation for your platform.
+    // You can also access each implementation directly e.g. INotifyWatcher.
+    let mut watcher = RecommendedWatcher::new(tx, notify::Config::default())?;
+
+    // Add a path to be watched. All files and directories at that path and
+    // below will be monitored for changes.
+    watcher.watch(path.as_ref(), RecursiveMode::Recursive)?;
+
+    for res in rx {
+        match res {
+            Ok(_event) => {
+                let mut guard = RESETCACHE.lock().unwrap();
+                let _ = mem::replace(&mut *guard, true);
+            }
+            Err(error) => log::error!("An error occured monitoring the KeePass file: {error:?}"),
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
