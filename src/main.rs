@@ -1,4 +1,3 @@
-#![feature(lock_value_accessors)]
 use actix_web::http::StatusCode;
 use actix_web::{
     get,
@@ -135,7 +134,7 @@ fn get_entry_from_keepass_cache(
     config: &Config,
 ) -> Option<HashMap<String, String>> {
     debug!("Obtaining secret '{}' from KeePass cache...", entry_path);
-    let reset_cache = RESETCACHE.get_cloned().unwrap();
+    let reset_cache = RESETCACHE.lock().unwrap().to_owned();
     // Check if last access is too long ago
     if reset_cache
         || LAST_KEEPASS_ACCESS.get().timestamp_millis()
