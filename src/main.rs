@@ -7,13 +7,9 @@ use actix_web::{
 use chrono::{Duration, Utc};
 use clap::Parser;
 use core::panic;
-use futures::{
-    channel::mpsc::{channel, Receiver},
-    SinkExt, StreamExt,
-};
 use keepass::{db::NodeRef, error::DatabaseOpenError, Database, DatabaseKey};
 use log::{debug, info};
-use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::io;
@@ -21,6 +17,7 @@ use std::path::Path;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::Command;
 use std::str;
+use std::thread;
 use std::{fs::File, path::PathBuf};
 
 #[cfg(target_os = "windows")]
@@ -86,16 +83,17 @@ fn main() {
                 .into_string()
         );
     }
-    let _result = run_webservice(config);
-    debug!("Webservice started!");
 
     debug!("Watching file {:?}", keepass_path);
 
-    futures::executor::block_on(async {
-        if let Err(e) = async_watch(keepass_path).await {
-            println!("error: {:?}", e)
+    thread::spawn(|| {
+        if let Err(error) = watch(keepass_path) {
+            log::error!("Error: {error:?}");
         }
-    })
+    });
+
+    let _result = run_webservice(config);
+    debug!("Webservice started!");
 }
 
 #[actix_web::main]
@@ -111,14 +109,18 @@ async fn run_webservice(state: Config) -> io::Result<()> {
     .bind(format!("127.0.0.1:{}", port))?
     .workers(1)
     .client_request_timeout(std::time::Duration::new(60, 0))
-    .run();
-    Ok(())
+    .run()
+    .await
 }
 
 thread_local! {
     static LAST_USER_ACCESS: Cell<chrono::DateTime<Utc>> = Cell::new(Utc::now() - Duration::hours(1));
     static LAST_KEEPASS_ACCESS: Cell<chrono::DateTime<Utc>> = Cell::new(Utc::now() - Duration::weeks(1));
     static SECRETS_MAP: RefCell<HashMap<String, HashMap<String, String>>> = RefCell::new(HashMap::new());
+}
+
+fn empty_keepass_cache() {
+    SECRETS_MAP.set(HashMap::new());
 }
 
 fn get_entry_from_keepass_cache(
@@ -131,7 +133,7 @@ fn get_entry_from_keepass_cache(
         < (Utc::now() - Duration::hours(config.timeout_keepass_cache_in_hours)).timestamp_millis()
     {
         debug!("Resetting KeePass cache because of timeout");
-        SECRETS_MAP.set(HashMap::new());
+        empty_keepass_cache();
     }
     let mut secrets_map = SECRETS_MAP.take();
     if secrets_map.is_empty() {
@@ -408,34 +410,21 @@ async fn get_username(path: web::Path<(String,)>, config: web::Data<Config>) -> 
     }
 }
 
-fn async_watcher() -> notify::Result<(RecommendedWatcher, Receiver<notify::Result<Event>>)> {
-    let (mut tx, rx) = channel(1);
+fn watch<P: AsRef<Path>>(path: P) -> notify::Result<()> {
+    let (tx, rx) = std::sync::mpsc::channel();
 
     // Automatically select the best implementation for your platform.
     // You can also access each implementation directly e.g. INotifyWatcher.
-    let watcher = RecommendedWatcher::new(
-        move |res| {
-            futures::executor::block_on(async {
-                tx.send(res).await.unwrap();
-            })
-        },
-        notify::Config::default(),
-    )?;
-
-    Ok((watcher, rx))
-}
-
-async fn async_watch<P: AsRef<Path>>(path: P) -> notify::Result<()> {
-    let (mut watcher, mut rx) = async_watcher()?;
+    let mut watcher = RecommendedWatcher::new(tx, notify::Config::default())?;
 
     // Add a path to be watched. All files and directories at that path and
     // below will be monitored for changes.
-    watcher.watch(path.as_ref(), RecursiveMode::NonRecursive)?;
+    watcher.watch(path.as_ref(), RecursiveMode::Recursive)?;
 
-    while let Some(res) = rx.next().await {
+    for res in rx {
         match res {
-            Ok(event) => println!("changed: {:?}", event),
-            Err(e) => println!("watch error: {:?}", e),
+            Ok(event) => empty_keepass_cache(),
+            Err(error) => log::error!("An error occured monitoring the KeePass file: {error:?}"),
         }
     }
 
