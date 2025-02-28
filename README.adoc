@@ -48,7 +48,7 @@ seekret-service --help
 RUST_LOG=debug cargo test -- --nocapture
 ----
 
-=== Test with
+=== Testing with Test Keystore
 
 [source,bash]
 ----
