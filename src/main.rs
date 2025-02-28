@@ -1,3 +1,4 @@
+#![feature(lock_value_accessors)]
 use actix_web::http::StatusCode;
 use actix_web::{
     get,
@@ -12,13 +13,14 @@ use log::{debug, info};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::io;
 use std::path::Path;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::Command;
 use std::str;
+use std::sync::Mutex;
 use std::thread;
 use std::{fs::File, path::PathBuf};
+use std::{io, mem};
 
 #[cfg(target_os = "windows")]
 mod ok_abort_window;
@@ -31,6 +33,8 @@ use password_window::PasswordWindow;
 
 const KEY_USERNAME: &str = "USN";
 const KEY_PASSWORD: &str = "PWD";
+
+static RESETCACHE: Mutex<bool> = Mutex::new(false);
 
 /// Secret service
 #[derive(Parser, Clone)]
@@ -120,7 +124,10 @@ thread_local! {
 }
 
 fn empty_keepass_cache() {
+    debug!("Emptying KeePass cache...");
     SECRETS_MAP.set(HashMap::new());
+    let mut guard = RESETCACHE.lock().unwrap();
+    let _ = mem::replace(&mut *guard, false);
 }
 
 fn get_entry_from_keepass_cache(
@@ -128,9 +135,12 @@ fn get_entry_from_keepass_cache(
     config: &Config,
 ) -> Option<HashMap<String, String>> {
     debug!("Obtaining secret '{}' from KeePass cache...", entry_path);
+    let reset_cache = RESETCACHE.get_cloned().unwrap();
     // Check if last access is too long ago
-    if LAST_KEEPASS_ACCESS.get().timestamp_millis()
-        < (Utc::now() - Duration::hours(config.timeout_keepass_cache_in_hours)).timestamp_millis()
+    if reset_cache
+        || LAST_KEEPASS_ACCESS.get().timestamp_millis()
+            < (Utc::now() - Duration::hours(config.timeout_keepass_cache_in_hours))
+                .timestamp_millis()
     {
         debug!("Resetting KeePass cache because of timeout");
         empty_keepass_cache();
@@ -395,12 +405,12 @@ async fn get_username(path: web::Path<(String,)>, config: web::Data<Config>) -> 
     let entry_path = path.into_inner().0.to_string();
     info!("Got request for: {}", entry_path);
 
-    // Request access from user if last authoriation has not been recently
-    if !get_user_authorization(&config.get_ref()) {
+    // Request access from user if last authorization has not been recently
+    if !get_user_authorization(config.get_ref()) {
         return HttpResponse::Unauthorized().body("Access denied by user!");
     }
 
-    let username = get_entry_from_keepass_cache(&entry_path, &config.get_ref());
+    let username = get_entry_from_keepass_cache(&entry_path, config.get_ref());
     match username {
         Some(secret_string) => {
             HttpResponse::Ok().body(secret_string.get(KEY_USERNAME).unwrap().to_string())
@@ -423,7 +433,10 @@ fn watch<P: AsRef<Path>>(path: P) -> notify::Result<()> {
 
     for res in rx {
         match res {
-            Ok(event) => empty_keepass_cache(),
+            Ok(_event) => {
+                let mut guard = RESETCACHE.lock().unwrap();
+                let _ = mem::replace(&mut *guard, true);
+            }
             Err(error) => log::error!("An error occured monitoring the KeePass file: {error:?}"),
         }
     }
