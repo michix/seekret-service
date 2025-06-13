@@ -23,11 +23,11 @@ jobs:
             command: build
           - os-name: Linux-x86_64
             name: seekret-service_linux-x86-64.tar.gz
-            runs-on: ubuntu-20.04
+            runs-on: ubuntu-latest
             target: x86_64-unknown-linux-musl
             command: build
           - os-name: Linux-aarch64
-            runs-on: ubuntu-20.04
+            runs-on: ubuntu-latest
             name: seekret-service_linux-aarch64.tar.gz
             target: aarch64-unknown-linux-musl
             command: build
