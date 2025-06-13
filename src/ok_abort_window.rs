@@ -2,7 +2,7 @@ use std::rc::Rc;
 use std::{borrow::BorrowMut, cell::RefCell};
 
 use log::debug;
-use winsafe::{co, gui, prelude::*};
+use winsafe::{co, gui};
 
 #[derive(Clone)]
 pub struct OkAbortWindow {
