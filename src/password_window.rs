@@ -27,7 +27,7 @@ impl PasswordWindow {
             &wnd,
             gui::EditOpts {
                 width: 200,
-                edit_style: co::ES::PASSWORD,
+                control_style: co::ES::PASSWORD,
                 position: (20, 20),
                 ..Default::default()
             },
