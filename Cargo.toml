@@ -20,20 +20,22 @@ actix-web = "4"
 actix-rt = "2"
 log = "0.4"
 env_logger = "0.11"
-confy = "0.6.1"
-serde = "1.0.201"
-serde_derive = "1.0.201"
-clap = { version = "4.5.4", features = ["derive"] }
-keepass = "0.7.10"
-chrono = "0.4.38"
-notify = "5.0.0"
+confy = "1.0.0"
+serde = "1.0.219"
+serde_derive = "1.0.219"
+clap = { version = "4.5.40", features = ["derive"] }
+keepass = "0.8.3"
+simple_crypt = "0.2.3"
+rand = "0.9.1"
+chrono = "0.4.41"
+notify = "8.0.0"
 futures = "0.3.31"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-robius-authentication = "0.1.0"
+robius-authentication = "0.1.1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-winsafe = { version = "0.0.22", features = ["gui"] }
+winsafe = { version = "0.0.24", features = ["gui"] }
 
 [dev-dependencies]
-test-log = "0.2.16"
+test-log = "0.2.17"
