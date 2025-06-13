@@ -10,6 +10,8 @@ use core::panic;
 use keepass::{db::NodeRef, error::DatabaseOpenError, Database, DatabaseKey};
 use log::{debug, info};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use rand::{distr::Alphanumeric, Rng};
+use simple_crypt::{decrypt, encrypt};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::Path;
@@ -119,7 +121,8 @@ async fn run_webservice(state: Config) -> io::Result<()> {
 thread_local! {
     static LAST_USER_ACCESS: Cell<chrono::DateTime<Utc>> = Cell::new(Utc::now() - Duration::hours(1));
     static LAST_KEEPASS_ACCESS: Cell<chrono::DateTime<Utc>> = Cell::new(Utc::now() - Duration::weeks(1));
-    static SECRETS_MAP: RefCell<HashMap<String, HashMap<String, String>>> = RefCell::new(HashMap::new());
+    static SECRETS_MAP: RefCell<HashMap<String, HashMap<String, Vec<u8>>>> = RefCell::new(HashMap::new());
+    static CRYPT_SECRET: RefCell<Vec<u8>> = RefCell::new(rand::rng().sample_iter(&Alphanumeric).take(64).collect::<Vec<u8>>());
 }
 
 fn empty_keepass_cache() {
@@ -132,7 +135,7 @@ fn empty_keepass_cache() {
 fn get_entry_from_keepass_cache(
     entry_path: &String,
     config: &Config,
-) -> Option<HashMap<String, String>> {
+) -> Option<HashMap<String, Vec<u8>>> {
     debug!("Obtaining secret '{}' from KeePass cache...", entry_path);
     let reset_cache = RESETCACHE.lock().unwrap().to_owned();
     // Check if last access is too long ago
@@ -148,7 +151,7 @@ fn get_entry_from_keepass_cache(
     if secrets_map.is_empty() {
         secrets_map = fill_keepass_cache(config).expect("Filling KeePass cache failed");
     }
-    let mut values: Option<HashMap<String, String>> = None;
+    let mut values: Option<HashMap<String, Vec<u8>>> = None;
     if secrets_map.contains_key(entry_path) {
         values = Some(secrets_map.get(entry_path).unwrap().clone());
     }
@@ -159,7 +162,7 @@ fn get_entry_from_keepass_cache(
 
 fn fill_keepass_cache(
     config: &Config,
-) -> Result<HashMap<String, HashMap<String, String>>, DatabaseOpenError> {
+) -> Result<HashMap<String, HashMap<String, Vec<u8>>>, DatabaseOpenError> {
     let keepass_path = config.keepass_path.clone();
     debug!(
         "Filling KeePass cache with KeePass database from file '{}'...",
@@ -186,8 +189,8 @@ fn fill_keepass_cache(
     Ok(password_map)
 }
 
-fn db_to_map(db: Database) -> HashMap<String, HashMap<String, String>> {
-    let mut map: HashMap<String, HashMap<String, String>> = HashMap::new();
+fn db_to_map(db: Database) -> HashMap<String, HashMap<String, Vec<u8>>> {
+    let mut map: HashMap<String, HashMap<String, Vec<u8>>> = HashMap::new();
     for node in &db.root.children {
         match node.into() {
             NodeRef::Group(group) => {
@@ -205,13 +208,24 @@ fn db_to_map(db: Database) -> HashMap<String, HashMap<String, String>> {
 fn insert_map_values(
     e: &keepass::db::Entry,
     prefix: String,
-    map: &mut HashMap<String, HashMap<String, String>>,
+    map: &mut HashMap<String, HashMap<String, Vec<u8>>>,
 ) {
     let key: String = prefix.clone() + e.get_title().unwrap_or("(not_title)");
-    let password = e.get_password().unwrap_or("(no_password)").into();
-    let username = e.get_username().unwrap_or("(no_username)").into();
+    let crypt_secret = CRYPT_SECRET.take();
+    let secret = String::from_utf8(crypt_secret.clone()).unwrap();
+    CRYPT_SECRET.set(crypt_secret);
+    let password = encrypt(
+        e.get_password().unwrap_or("(no_password)").as_bytes(),
+        secret.as_bytes(),
+    )
+    .expect("Failed to encrypt password");
+    let username = encrypt(
+        e.get_username().unwrap_or("(no_username)").as_bytes(),
+        secret.as_bytes(),
+    )
+    .expect("Failed to encrypt username");
     debug!("Adding entry: {}", key);
-    let mut value_map: HashMap<String, String> = HashMap::new();
+    let mut value_map: HashMap<String, Vec<u8>> = HashMap::new();
     value_map.insert(KEY_USERNAME.into(), username);
     value_map.insert(KEY_PASSWORD.into(), password);
     map.insert(key, value_map);
@@ -219,9 +233,9 @@ fn insert_map_values(
 
 fn recurse_db(
     group: &keepass::db::Group,
-    mut map: HashMap<String, HashMap<String, String>>,
+    mut map: HashMap<String, HashMap<String, Vec<u8>>>,
     upper_prefix: String,
-) -> HashMap<String, HashMap<String, String>> {
+) -> HashMap<String, HashMap<String, Vec<u8>>> {
     debug!(
         "Entering group '{}' with prefix '{}'...",
         group.name, upper_prefix
@@ -389,11 +403,19 @@ async fn get_secret(path: web::Path<(String,)>, config: web::Data<Config>) -> im
         return HttpResponse::Unauthorized().body("Access denied by user!");
     }
 
-    let secret = get_entry_from_keepass_cache(&entry_path, &config);
-    match secret {
-        Some(secret_string) => {
-            HttpResponse::Ok().body(secret_string.get(KEY_PASSWORD).unwrap().to_string())
-        }
+    let crypt_secret = CRYPT_SECRET.take();
+    let secret =
+        String::from_utf8(crypt_secret.clone()).expect("Failed to convert secret to String");
+    CRYPT_SECRET.set(crypt_secret);
+    let secret_entry = get_entry_from_keepass_cache(&entry_path, &config);
+    match secret_entry {
+        Some(secret_string) => HttpResponse::Ok().body(
+            decrypt(
+                &secret_string.get(KEY_PASSWORD).unwrap(),
+                &secret.as_bytes(),
+            )
+            .expect("Failed to decrypt secret"),
+        ),
         None => HttpResponse::build(StatusCode::NOT_FOUND)
             .body(format!("Failed to retrieve secret for: {}", entry_path)),
     }
@@ -404,6 +426,11 @@ async fn get_username(path: web::Path<(String,)>, config: web::Data<Config>) -> 
     let entry_path = path.into_inner().0.to_string();
     info!("Got request for: {}", entry_path);
 
+    let crypt_secret = CRYPT_SECRET.take();
+    let secret =
+        String::from_utf8(crypt_secret.clone()).expect("Failed to convert secret to String");
+    CRYPT_SECRET.set(crypt_secret);
+
     // Request access from user if last authorization has not been recently
     if !get_user_authorization(config.get_ref()) {
         return HttpResponse::Unauthorized().body("Access denied by user!");
@@ -411,9 +438,13 @@ async fn get_username(path: web::Path<(String,)>, config: web::Data<Config>) -> 
 
     let username = get_entry_from_keepass_cache(&entry_path, config.get_ref());
     match username {
-        Some(secret_string) => {
-            HttpResponse::Ok().body(secret_string.get(KEY_USERNAME).unwrap().to_string())
-        }
+        Some(secret_string) => HttpResponse::Ok().body(
+            decrypt(
+                &secret_string.get(KEY_USERNAME).unwrap(),
+                &secret.as_bytes(),
+            )
+            .expect("Failed to decrypt username"),
+        ),
         None => HttpResponse::build(StatusCode::NOT_FOUND)
             .body(format!("Failed to retrieve secret for: {}", entry_path)),
     }
