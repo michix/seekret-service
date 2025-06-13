@@ -1,7 +1,7 @@
 use std::rc::Rc;
 use std::{borrow::BorrowMut, cell::RefCell};
 
-use winsafe::{co, gui, prelude::*};
+use winsafe::{co, gui};
 
 #[derive(Clone)]
 pub struct PasswordWindow {
