@@ -82,7 +82,13 @@ impl PasswordWindow {
         });
         let self3 = self.clone();
         self.button_okay.on().bn_clicked(move || {
-            self3.set_input_text(self3.text_input.text().clone());
+            self3.set_input_text(
+                self3
+                    .text_input
+                    .text()
+                    .clone()
+                    .expect("Could not clone input text!"),
+            );
             self3.wnd.close();
             Ok(())
         });
