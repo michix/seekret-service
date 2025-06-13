@@ -2,6 +2,11 @@
 
 ## Version 1
 
+### 1.2.1
+
+* Fixes encryption in main memory.
+* Upgrades Dependencies
+
 ### 1.2.0
 
 * Monitors KeePass file and reloads it on change.
