@@ -2,6 +2,10 @@
 
 ## Version 1
 
+### 1.2.2
+
+* Switches from `simple_crypt` to `RustCrypto` (kudos to @xformerfhs).
+
 ### 1.2.1
 
 * Fixes encryption in main memory.

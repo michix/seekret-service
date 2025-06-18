@@ -4,14 +4,18 @@ use actix_web::{
     web::{self, Data},
     App, HttpResponse, HttpServer, Responder,
 };
+use chacha20poly1305::Key;
+use chacha20poly1305::Nonce;
+use chacha20poly1305::{
+    aead::{Aead, AeadCore, KeyInit, OsRng},
+    ChaCha20Poly1305,
+};
 use chrono::{Duration, Utc};
 use clap::Parser;
 use core::panic;
 use keepass::{db::NodeRef, error::DatabaseOpenError, Database, DatabaseKey};
 use log::{debug, info};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use rand::{distr::Alphanumeric, Rng};
-use simple_crypt::{decrypt, encrypt};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::Path;
@@ -34,6 +38,7 @@ use password_window::PasswordWindow;
 
 const KEY_USERNAME: &str = "USN";
 const KEY_PASSWORD: &str = "PWD";
+const KEY_NONCE: &str = "NON";
 
 static RESETCACHE: Mutex<bool> = Mutex::new(false);
 
@@ -66,6 +71,8 @@ pub struct Config {
     use_touch_id: bool,
 }
 
+/// Initializes the logger, parses configuration, checks file existence,
+/// starts the file watcher thread, and launches the webservice.
 fn main() {
     env_logger::init();
     let config = Config::parse();
@@ -101,6 +108,15 @@ fn main() {
     debug!("Webservice started!");
 }
 
+/// Runs the Actix webservice using the provided configuration.
+///
+/// # Arguments
+///
+/// * `state` - The application configuration.
+///
+/// # Returns
+///
+/// An `io::Result<()>` indicating success or failure.
 #[actix_web::main]
 async fn run_webservice(state: Config) -> io::Result<()> {
     let port = state.port.to_string();
@@ -122,9 +138,10 @@ thread_local! {
     static LAST_USER_ACCESS: Cell<chrono::DateTime<Utc>> = Cell::new(Utc::now() - Duration::hours(1));
     static LAST_KEEPASS_ACCESS: Cell<chrono::DateTime<Utc>> = Cell::new(Utc::now() - Duration::weeks(1));
     static SECRETS_MAP: RefCell<HashMap<String, HashMap<String, Vec<u8>>>> = RefCell::new(HashMap::new());
-    static CRYPT_SECRET: RefCell<Vec<u8>> = RefCell::new(rand::rng().sample_iter(&Alphanumeric).take(64).collect::<Vec<u8>>());
+    static CRYPT_SECRET: RefCell<Key> = RefCell::new(ChaCha20Poly1305::generate_key(&mut OsRng));
 }
 
+/// Empties the KeePass cache and resets the cache invalidation flag.
 fn empty_keepass_cache() {
     debug!("Emptying KeePass cache...");
     SECRETS_MAP.set(HashMap::new());
@@ -132,6 +149,16 @@ fn empty_keepass_cache() {
     let _ = mem::replace(&mut *guard, false);
 }
 
+/// Retrieves an entry from the KeePass cache, refreshing the cache if needed.
+///
+/// # Arguments
+///
+/// * `entry_path` - The path to the KeePass entry.
+/// * `config` - The application configuration.
+///
+/// # Returns
+///
+/// An `Option` containing the entry's secret map if found.
 fn get_entry_from_keepass_cache(
     entry_path: &String,
     config: &Config,
@@ -160,6 +187,15 @@ fn get_entry_from_keepass_cache(
     values
 }
 
+/// Fills the KeePass cache by opening the database and extracting entries.
+///
+/// # Arguments
+///
+/// * `config` - The application configuration.
+///
+/// # Returns
+///
+/// A `Result` containing the map of entries or a database open error.
 fn fill_keepass_cache(
     config: &Config,
 ) -> Result<HashMap<String, HashMap<String, Vec<u8>>>, DatabaseOpenError> {
@@ -189,6 +225,15 @@ fn fill_keepass_cache(
     Ok(password_map)
 }
 
+/// Converts a KeePass database into a map of entry paths to secret maps.
+///
+/// # Arguments
+///
+/// * `db` - The KeePass database.
+///
+/// # Returns
+///
+/// A map of entry paths to their associated secrets.
 fn db_to_map(db: Database) -> HashMap<String, HashMap<String, Vec<u8>>> {
     let mut map: HashMap<String, HashMap<String, Vec<u8>>> = HashMap::new();
     for node in &db.root.children {
@@ -205,6 +250,13 @@ fn db_to_map(db: Database) -> HashMap<String, HashMap<String, Vec<u8>>> {
     map
 }
 
+/// Inserts the values of a KeePass entry into the provided map, encrypting them.
+///
+/// # Arguments
+///
+/// * `e` - The KeePass entry.
+/// * `prefix` - The path prefix for the entry.
+/// * `map` - The map to insert the entry into.
 fn insert_map_values(
     e: &keepass::db::Entry,
     prefix: String,
@@ -212,25 +264,40 @@ fn insert_map_values(
 ) {
     let key: String = prefix.clone() + e.get_title().unwrap_or("(not_title)");
     let crypt_secret = CRYPT_SECRET.take();
-    let secret = String::from_utf8(crypt_secret.clone()).unwrap();
+    let cipher = ChaCha20Poly1305::new(&crypt_secret);
+    let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
     CRYPT_SECRET.set(crypt_secret);
-    let password = encrypt(
-        e.get_password().unwrap_or("(no_password)").as_bytes(),
-        secret.as_bytes(),
-    )
-    .expect("Failed to encrypt password");
-    let username = encrypt(
-        e.get_username().unwrap_or("(no_username)").as_bytes(),
-        secret.as_bytes(),
-    )
-    .expect("Failed to encrypt username");
+    let password = cipher
+        .encrypt(
+            &nonce,
+            e.get_password().unwrap_or("(no_password)").as_bytes(),
+        )
+        .expect("Failed to encrypt password");
+    let username = cipher
+        .encrypt(
+            &nonce,
+            e.get_username().unwrap_or("(no_username)").as_bytes(),
+        )
+        .expect("Failed to encrypt username");
     debug!("Adding entry: {}", key);
     let mut value_map: HashMap<String, Vec<u8>> = HashMap::new();
     value_map.insert(KEY_USERNAME.into(), username);
     value_map.insert(KEY_PASSWORD.into(), password);
+    value_map.insert(KEY_NONCE.into(), nonce.to_vec());
     map.insert(key, value_map);
 }
 
+/// Recursively traverses a KeePass group and inserts its entries into the map.
+///
+/// # Arguments
+///
+/// * `group` - The KeePass group.
+/// * `map` - The map to insert entries into.
+/// * `upper_prefix` - The path prefix for the group.
+///
+/// # Returns
+///
+/// The updated map with entries from the group.
 fn recurse_db(
     group: &keepass::db::Group,
     mut map: HashMap<String, HashMap<String, Vec<u8>>>,
@@ -287,6 +354,15 @@ fn get_password_from_user() -> String {
     }
 }
 
+/// Requests user authorization, using Touch ID or a basic dialog as configured.
+///
+/// # Arguments
+///
+/// * `config` - The application configuration.
+///
+/// # Returns
+///
+/// `true` if authorization is granted, `false` otherwise.
 fn get_user_authorization(config: &Config) -> bool {
     let mut authorization_given = true;
     // Only ask if the user has now acknowledged recently
@@ -393,6 +469,16 @@ fn user_authorization_dialog_basic() -> bool {
     }
 }
 
+/// Actix handler for retrieving a secret from the KeePass database.
+///
+/// # Arguments
+///
+/// * `path` - The web path containing the entry path.
+/// * `config` - The application configuration.
+///
+/// # Returns
+///
+/// An HTTP response containing the decrypted secret or an error.
 #[get("/{entry_path:.*}/secret")]
 async fn get_secret(path: web::Path<(String,)>, config: web::Data<Config>) -> impl Responder {
     let entry_path = path.into_inner().0.to_string();
@@ -404,52 +490,71 @@ async fn get_secret(path: web::Path<(String,)>, config: web::Data<Config>) -> im
     }
 
     let crypt_secret = CRYPT_SECRET.take();
-    let secret =
-        String::from_utf8(crypt_secret.clone()).expect("Failed to convert secret to String");
+    let cipher = ChaCha20Poly1305::new(&crypt_secret);
     CRYPT_SECRET.set(crypt_secret);
+    debug!("Got crypt_secret: {}", crypt_secret.len());
     let secret_entry = get_entry_from_keepass_cache(&entry_path, &config);
     match secret_entry {
         Some(secret_string) => HttpResponse::Ok().body(
-            decrypt(
-                &secret_string.get(KEY_PASSWORD).unwrap(),
-                &secret.as_bytes(),
-            )
-            .expect("Failed to decrypt secret"),
+            cipher
+                .decrypt(
+                    Nonce::from_slice(secret_string.get(KEY_NONCE).unwrap()),
+                    secret_string.get(KEY_PASSWORD).unwrap().as_ref(),
+                )
+                .expect("Failed to decrypt secret"),
         ),
         None => HttpResponse::build(StatusCode::NOT_FOUND)
             .body(format!("Failed to retrieve secret for: {}", entry_path)),
     }
 }
 
+/// Actix handler for retrieving a username from the KeePass database.
+///
+/// # Arguments
+///
+/// * `path` - The web path containing the entry path.
+/// * `config` - The application configuration.
+///
+/// # Returns
+///
+/// An HTTP response containing the decrypted username or an error.
 #[get("/{entry_path:.*}/username")]
 async fn get_username(path: web::Path<(String,)>, config: web::Data<Config>) -> impl Responder {
     let entry_path = path.into_inner().0.to_string();
     info!("Got request for: {}", entry_path);
 
-    let crypt_secret = CRYPT_SECRET.take();
-    let secret =
-        String::from_utf8(crypt_secret.clone()).expect("Failed to convert secret to String");
-    CRYPT_SECRET.set(crypt_secret);
-
-    // Request access from user if last authorization has not been recently
+    // Request access from user if last authoriation has not been recently
     if !get_user_authorization(config.get_ref()) {
         return HttpResponse::Unauthorized().body("Access denied by user!");
     }
 
-    let username = get_entry_from_keepass_cache(&entry_path, config.get_ref());
-    match username {
+    let crypt_secret = CRYPT_SECRET.take();
+    let cipher = ChaCha20Poly1305::new(&crypt_secret);
+    CRYPT_SECRET.set(crypt_secret);
+    let secret_entry = get_entry_from_keepass_cache(&entry_path, &config);
+    match secret_entry {
         Some(secret_string) => HttpResponse::Ok().body(
-            decrypt(
-                &secret_string.get(KEY_USERNAME).unwrap(),
-                &secret.as_bytes(),
-            )
-            .expect("Failed to decrypt username"),
+            cipher
+                .decrypt(
+                    Nonce::from_slice(secret_string.get(KEY_NONCE).unwrap()),
+                    secret_string.get(KEY_USERNAME).unwrap().as_ref(),
+                )
+                .expect("Failed to decrypt username"),
         ),
         None => HttpResponse::build(StatusCode::NOT_FOUND)
             .body(format!("Failed to retrieve secret for: {}", entry_path)),
     }
 }
 
+/// Watches the specified path for changes and sets a flag to reset the cache on modification.
+///
+/// # Arguments
+///
+/// * `path` - The path to watch.
+///
+/// # Returns
+///
+/// A `notify::Result<()>` indicating success or failure.
 fn watch<P: AsRef<Path>>(path: P) -> notify::Result<()> {
     let (tx, rx) = std::sync::mpsc::channel();
 
