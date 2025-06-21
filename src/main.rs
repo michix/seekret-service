@@ -1,10 +1,9 @@
-use actix_web::http::StatusCode;
 use actix_web::{
     get,
+    http::StatusCode,
     web::{self, Data},
     App, HttpResponse, HttpServer, Responder,
 };
-use chacha20poly1305::Key;
 use chacha20poly1305::Nonce;
 use chacha20poly1305::{
     aead::{Aead, AeadCore, KeyInit, OsRng},
@@ -138,7 +137,7 @@ thread_local! {
     static LAST_USER_ACCESS: Cell<chrono::DateTime<Utc>> = Cell::new(Utc::now() - Duration::hours(1));
     static LAST_KEEPASS_ACCESS: Cell<chrono::DateTime<Utc>> = Cell::new(Utc::now() - Duration::weeks(1));
     static SECRETS_MAP: RefCell<HashMap<String, HashMap<String, Vec<u8>>>> = RefCell::new(HashMap::new());
-    static CRYPT_SECRET: RefCell<Key> = RefCell::new(ChaCha20Poly1305::generate_key(&mut OsRng));
+    static CIPHER: RefCell<ChaCha20Poly1305> = RefCell::new(ChaCha20Poly1305::new(&ChaCha20Poly1305::generate_key(&mut OsRng)));
 }
 
 /// Empties the KeePass cache and resets the cache invalidation flag.
@@ -263,10 +262,8 @@ fn insert_map_values(
     map: &mut HashMap<String, HashMap<String, Vec<u8>>>,
 ) {
     let key: String = prefix.clone() + e.get_title().unwrap_or("(not_title)");
-    let crypt_secret = CRYPT_SECRET.take();
-    let cipher = ChaCha20Poly1305::new(&crypt_secret);
+    let cipher = CIPHER.with(|c| c.borrow().clone());
     let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
-    CRYPT_SECRET.set(crypt_secret);
     let password = cipher
         .encrypt(
             &nonce,
@@ -489,10 +486,7 @@ async fn get_secret(path: web::Path<(String,)>, config: web::Data<Config>) -> im
         return HttpResponse::Unauthorized().body("Access denied by user!");
     }
 
-    let crypt_secret = CRYPT_SECRET.take();
-    let cipher = ChaCha20Poly1305::new(&crypt_secret);
-    CRYPT_SECRET.set(crypt_secret);
-    debug!("Got crypt_secret: {}", crypt_secret.len());
+    let cipher = CIPHER.with(|c| c.borrow().clone());
     let secret_entry = get_entry_from_keepass_cache(&entry_path, &config);
     match secret_entry {
         Some(secret_string) => HttpResponse::Ok().body(
@@ -528,9 +522,7 @@ async fn get_username(path: web::Path<(String,)>, config: web::Data<Config>) -> 
         return HttpResponse::Unauthorized().body("Access denied by user!");
     }
 
-    let crypt_secret = CRYPT_SECRET.take();
-    let cipher = ChaCha20Poly1305::new(&crypt_secret);
-    CRYPT_SECRET.set(crypt_secret);
+    let cipher = CIPHER.with(|c| c.borrow().clone());
     let secret_entry = get_entry_from_keepass_cache(&entry_path, &config);
     match secret_entry {
         Some(secret_string) => HttpResponse::Ok().body(
