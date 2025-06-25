@@ -30,6 +30,7 @@ rand = "0.9.1"
 chrono = "0.4.41"
 notify = "8.0.0"
 futures = "0.3.31"
+chacha20poly1305 = "0.10.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 robius-authentication = "0.1.1"
