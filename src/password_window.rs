@@ -32,7 +32,7 @@ impl PasswordWindow {
                 ..Default::default()
             },
         );
-        txt_input.hwnd().SendMessage(co::EM::SETLIMITTEXT, 64, 0); // Set max length to 64
+        txt_input.set_limit_text(64); // Set max length to 64
 
         let btn_abort = gui::Button::new(
             &wnd,
