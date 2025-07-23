@@ -27,7 +27,7 @@ impl PasswordWindow {
         let txt_input = gui::Edit::new(
             &wnd,
             gui::EditOpts {
-                width: 200,
+                width: 360,
                 control_style: co::ES::PASSWORD,
                 position: (20, 20),
                 resize_behavior: (gui::Horz::Resize, gui::Vert::None),
