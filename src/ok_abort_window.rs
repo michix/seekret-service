@@ -18,7 +18,7 @@ impl OkAbortWindow {
         let wnd = gui::WindowMain::new(gui::WindowMainOpts {
             title: window_title,
             class_icon: gui::Icon::Id(101),
-            size: (400, 180),
+            size: (400, 130),
             style: co::WS::OVERLAPPEDWINDOW,
             ..Default::default()
         });
