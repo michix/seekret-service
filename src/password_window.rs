@@ -34,7 +34,6 @@ impl PasswordWindow {
                 ..Default::default()
             },
         );
-        txt_input.set_input_text(255)?;
 
         let btn_abort = gui::Button::new(
             &wnd,
