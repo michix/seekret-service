@@ -28,7 +28,7 @@ impl PasswordWindow {
             &wnd,
             gui::EditOpts {
                 width: 460,
-                control_style: co::ES::PASSWORD,
+                control_style: co::ES::ES_AUTOHSCROLL | co::ES::PASSWORD,
                 position: (20, 20),
                 resize_behavior: (gui::Horz::Resize, gui::Vert::None),
                 ..Default::default()
