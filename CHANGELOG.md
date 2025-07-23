@@ -5,6 +5,7 @@
 ### 1.2.3
 
 * Fixes maximum password length in Windows dialog.
+* Upgrades Dependencies
 
 ### 1.2.2
 
