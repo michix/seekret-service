@@ -19,8 +19,8 @@ impl PasswordWindow {
         let wnd = gui::WindowMain::new(gui::WindowMainOpts {
             title: window_title,
             class_icon: gui::Icon::Id(101),
-            size: (240, 100),
-            resize_behavior: (gui::Horz::Resize, gui::Vert::Resize),
+            size: (400, 166),
+            style: co::WS::OVERLAPPEDWINDOW,
             ..Default::default()
         });
 
