@@ -2,6 +2,10 @@
 
 ## Version 1
 
+### 1.2.3
+
+* Fixes maximum password length in Windows dialog.
+
 ### 1.2.2
 
 * Switches from `simple_crypt` to `RustCrypto` (kudos to @xformerfhs).

@@ -19,16 +19,18 @@ impl PasswordWindow {
         let wnd = gui::WindowMain::new(gui::WindowMainOpts {
             title: window_title,
             class_icon: gui::Icon::Id(101),
-            size: (240, 100),
+            size: (500, 130),
+            style: co::WS::OVERLAPPEDWINDOW,
             ..Default::default()
         });
 
         let txt_input = gui::Edit::new(
             &wnd,
             gui::EditOpts {
-                width: 200,
-                control_style: co::ES::PASSWORD,
+                width: 460,
+                control_style: co::ES::AUTOHSCROLL | co::ES::PASSWORD,
                 position: (20, 20),
+                resize_behavior: (gui::Horz::Resize, gui::Vert::None),
                 ..Default::default()
             },
         );

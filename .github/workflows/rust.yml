@@ -2,21 +2,55 @@ name: Rust
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 env:
   CARGO_TERM_COLOR: always
+  CRATE_NAME: seekret-service
+  GITHUB_TOKEN: ${{ github.token }}
+  RUST_BACKTRACE: 1
 
 jobs:
   build:
-
-    runs-on: ubuntu-latest
-
+    strategy:
+      matrix:
+        platform:
+          - os-name: Windows-x86_64
+            name: seekret-service_windows-x86-64.zip
+            runs-on: windows-latest
+            target: x86_64-pc-windows-msvc
+            command: build
+          - os-name: Linux-x86_64
+            name: seekret-service_linux-x86-64.tar.gz
+            runs-on: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            command: build
+          - os-name: Linux-aarch64
+            runs-on: ubuntu-latest
+            name: seekret-service_linux-aarch64.tar.gz
+            target: aarch64-unknown-linux-musl
+            command: build
+          - os-name: macOS-aarch64
+            name: seekret-service_macos-aarch64.tar.gz
+            runs-on: macOS-latest
+            target: aarch64-apple-darwin
+            command: build
+    runs-on: ${{ matrix.platform.runs-on }}
     steps:
-    - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build binary
+        uses: houseabsolute/actions-rust-cross@v1
+        with:
+          command: ${{ matrix.platform.command }}
+          target: ${{ matrix.platform.target }}
+          args: "--locked --release"
+          strip: true
+      - name: Publish artifacts and release
+        uses: houseabsolute/actions-rust-release@v0
+        with:
+          executable-name: seekret-service
+          changes-file: CHANGELOG.md
+          target: ${{ matrix.platform.target }}
