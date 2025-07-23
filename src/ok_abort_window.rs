@@ -19,6 +19,7 @@ impl OkAbortWindow {
             title: window_title,
             class_icon: gui::Icon::Id(101),
             size: (240, 120),
+            resize_behavior: (gui::Horz::Resize, gui::Vert::Resize),
             ..Default::default()
         });
 
@@ -46,6 +47,7 @@ impl OkAbortWindow {
                 position: (20, 20),
                 size: (200, 60),
                 text: message,
+                resize_behavior: (gui::Horz::Resize, gui::Vert::Resize),
                 ..Default::default()
             },
         );

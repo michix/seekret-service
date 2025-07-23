@@ -20,6 +20,7 @@ impl PasswordWindow {
             title: window_title,
             class_icon: gui::Icon::Id(101),
             size: (240, 100),
+            resize_behavior: (gui::Horz::Resize, gui::Vert::Resize),
             ..Default::default()
         });
 
@@ -29,6 +30,7 @@ impl PasswordWindow {
                 width: 200,
                 control_style: co::ES::PASSWORD,
                 position: (20, 20),
+                resize_behavior: (gui::Horz::Resize, gui::Vert::None),
                 ..Default::default()
             },
         );
