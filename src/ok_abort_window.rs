@@ -19,7 +19,7 @@ impl OkAbortWindow {
             title: window_title,
             class_icon: gui::Icon::Id(101),
             size: (240, 120),
-            resize_behavior: (gui::Horz::Resize, gui::Vert::Resize),
+            style: co::WS::OVERLAPPEDWINDOW,
             ..Default::default()
         });
 
