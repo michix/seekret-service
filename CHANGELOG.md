@@ -2,6 +2,10 @@
 
 ## Version 1
 
+### 1.2.4
+
+* Adds check on startup if port is already in use.
+
 ### 1.2.3
 
 * Fixes maximum password length in Windows dialog.
