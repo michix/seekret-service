@@ -57,7 +57,7 @@ pub struct Config {
     keepass_keyfile: Option<PathBuf>,
     /// Portnumber under which secret service is access
     #[arg(long, default_value_t = 8123)]
-    port: u32,
+    port: u16,
     /// Number of hours the KeePass database should be kept in memory before asking again for the
     /// password
     #[arg(long, default_value_t = 12)]
@@ -103,8 +103,28 @@ fn main() {
         }
     });
 
-    let _result = run_webservice(config);
-    debug!("Webservice started!");
+    if is_port_in_use(config.port) {
+        log::error!("Error: Port {} is already in use", config.port);
+    } else {
+        info!("Starting webservice...");
+        let _result = run_webservice(config);
+        info!("Webservice stopped.");
+    }
+}
+
+/// Checks if a TCP port is already used by another process.
+///
+/// # Arguments
+///
+/// * `port` - The port number to check.
+///
+/// # Returns
+///
+/// `true` if the port is in use, `false` otherwise.
+fn is_port_in_use(port: u16) -> bool {
+    use std::net::TcpListener;
+    let addr = format!("127.0.0.1:{port}");
+    TcpListener::bind(addr).is_err()
 }
 
 /// Runs the Actix webservice using the provided configuration.
@@ -119,14 +139,14 @@ fn main() {
 #[actix_web::main]
 async fn run_webservice(state: Config) -> io::Result<()> {
     let port = state.port.to_string();
-    info!("{}", format!("Starting secret service on port {}", port));
+    info!("Starting secret service on port {port}");
     HttpServer::new(move || {
         App::new()
             .service(get_secret)
             .service(get_username)
             .app_data(Data::new(state.clone()))
     })
-    .bind(format!("127.0.0.1:{}", port))?
+    .bind(format!("127.0.0.1:{port}"))?
     .workers(1)
     .client_request_timeout(std::time::Duration::new(60, 0))
     .run()
