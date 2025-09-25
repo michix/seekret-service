@@ -5,6 +5,7 @@
 ### 1.2.4
 
 * Adds check on startup if port is already in use.
+* Updates dependencies.
 
 ### 1.2.3
 
