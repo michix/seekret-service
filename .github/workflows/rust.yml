@@ -5,6 +5,8 @@ on:
     branches: ["main"]
   pull_request:
     branches: ["main"]
+  release:
+    types: [created]
 
 env:
   CARGO_TERM_COLOR: always
@@ -49,6 +51,8 @@ jobs:
           args: "--locked --release"
           strip: true
       - name: Publish artifacts and release
+        # Only run on release events
+        if: github.event_name == 'release'
         uses: houseabsolute/actions-rust-release@v0
         with:
           executable-name: seekret-service
