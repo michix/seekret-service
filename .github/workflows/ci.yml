@@ -40,6 +40,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        shell: bash
       - name: Build binary
         uses: houseabsolute/actions-rust-cross@v1
         with:
@@ -51,5 +55,6 @@ jobs:
         uses: houseabsolute/actions-rust-release@v0
         with:
           executable-name: seekret-service
-          changes-file: CHANGELOG.md
           target: ${{ matrix.platform.target }}
+          changes-file: CHANGELOG.md
+          archive-name: seekret-service-${{ steps.version.outputs.VERSION }}-${{ matrix.platform.target }}
