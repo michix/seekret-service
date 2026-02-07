@@ -2,6 +2,10 @@
 
 ## Version 1
 
+### 1.2.7
+
+* Adds version number to release binary file names
+
 ### 1.2.6
 
 * Adds application name and version number to all popup window titles

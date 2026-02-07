@@ -2205,7 +2205,7 @@ dependencies = [
 
 [[package]]
 name = "seekret-service"
-version = "1.2.6"
+version = "1.2.7"
 dependencies = [
  "actix-rt",
  "actix-web",
