@@ -72,6 +72,28 @@ curl http://127.0.0.1:8124/root_entry1/secret
 cargo build --release
 ----
 
+== Development
+
+=== Updating Dependencies
+
+To automatically update all dependencies and run tests:
+
+[source,bash]
+----
+./update-dependencies.sh
+----
+
+This script will:
+
+1. Update all dependencies to their latest compatible versions
+2. Build the project
+3. Run all tests
+4. Run clippy linter
+5. Check code formatting
+6. Display a summary of dependency changes
+
+After running the script, review the changes and update `CHANGELOG.md` if needed.
+
 == Compiling
 
 === Windows
