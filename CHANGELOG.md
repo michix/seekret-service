@@ -5,6 +5,7 @@
 ### 1.2.6
 
 * Adds application name and version number to all popup window titles
+* Updates dependencies
 
 ### 1.2.5
 
