@@ -346,7 +346,7 @@ fn get_password_from_user() -> String {
     get_password
         .arg("--password")
         .arg("--title")
-        .arg("Secret Service");
+        .arg(format!("Seekret Service {}", env!("CARGO_PKG_VERSION")));
     let password = get_password.output().expect("Password not provided");
     str::trim(str::from_utf8(&password.stdout).unwrap()).into()
 }
@@ -355,7 +355,7 @@ fn get_password_from_user() -> String {
 fn get_password_from_user() -> String {
     debug!("Querying user for password...");
     let mut get_password = Command::new("osascript");
-    get_password.arg("-e").arg("Tell application \"System Events\" to display dialog \"Please provide the password for your safe:\" with hidden answer default answer \"\"").arg("-e").arg("text returned of result");
+    get_password.arg("-e").arg(format!("Tell application \"System Events\" to display dialog \"Please provide the password for your safe:\" with hidden answer default answer \"\" with title \"Seekret Service {}\"", env!("CARGO_PKG_VERSION"))).arg("-e").arg("text returned of result");
     let password = get_password.output().expect("Password not provided");
     str::trim(str::from_utf8(&password.stdout).unwrap()).into()
 }
@@ -363,7 +363,7 @@ fn get_password_from_user() -> String {
 #[cfg(target_os = "windows")]
 fn get_password_from_user() -> String {
     debug!("Querying user for password...");
-    let password_window = &PasswordWindow::new("Please provide a password".to_owned());
+    let password_window = &PasswordWindow::new(format!("Seekret Service {}: Please enter password", env!("CARGO_PKG_VERSION")));
     let result = password_window.run();
     match result {
         Ok(value) => value,
@@ -412,17 +412,18 @@ fn user_authorization_dialog_touchid() -> bool {
         .build()
         .unwrap();
 
+    let title = format!("Seekret Service {}", env!("CARGO_PKG_VERSION"));
     let text = Text {
         android: AndroidText {
-            title: "Authorize access to Secret Service",
+            title: &title,
             subtitle: Some("Please authorize access to Secret Service which has been requested."),
             description: Some(
                 "Please authorize access to Secret Service which has been requested.",
             ),
         },
-        apple: "Authorize access to Secret Service",
+        apple: &title,
         windows: WindowsText::new(
-            "Authorize access to Secret Service",
+            &title,
             "Please authorize access to Secret Service which has been requested.",
         )
         .expect("Cannot create Windows Text"),
@@ -450,6 +451,8 @@ fn user_authorization_dialog_basic() -> bool {
     let mut get_autorization = Command::new("zenity");
     get_autorization
         .arg("--question")
+        .arg("--title")
+        .arg(format!("Seekret Service {}", env!("CARGO_PKG_VERSION")))
         .arg("--text")
         .arg("Do you want to allow access to Secret Service?");
     let result = get_autorization
@@ -464,7 +467,7 @@ fn user_authorization_dialog_basic() -> bool {
     let mut get_autorization = Command::new("osascript");
     get_autorization
         .arg("-e")
-        .arg("Tell application \"System Events\" to display dialog \"Please approve access...\"");
+        .arg(format!("Tell application \"System Events\" to display dialog \"Please approve access...\" with title \"Seekret Service {}\"", env!("CARGO_PKG_VERSION")));
     let result = get_autorization
         .status()
         .expect("Authorization from user aborted");
@@ -475,7 +478,7 @@ fn user_authorization_dialog_basic() -> bool {
 fn user_authorization_dialog_basic() -> bool {
     debug!("Querying user for authorization...");
     let ok_abort_window = &OkAbortWindow::new(
-        "SeekretService".to_owned(),
+        format!("Seekret Service {}", env!("CARGO_PKG_VERSION")),
         "Please confirm access to KeePass from SeekretService...".to_owned(),
     );
     let result = ok_abort_window.run();
