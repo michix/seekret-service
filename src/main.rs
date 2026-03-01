@@ -84,15 +84,13 @@ fn main() {
             keepass_path.into_os_string().into_string()
         );
     }
-    if config.keepass_keyfile.is_some() && !config.keepass_keyfile.clone().unwrap().exists() {
-        panic!(
-            "KeePass key-file does not exist: {:?}",
-            config
-                .keepass_keyfile
-                .unwrap()
-                .into_os_string()
-                .into_string()
-        );
+    if let Some(keyfile) = &config.keepass_keyfile {
+        if !keyfile.exists() {
+            panic!(
+                "KeePass key-file does not exist: {:?}",
+                keyfile.clone().into_os_string().into_string()
+            );
+        }
     }
 
     debug!("Watching file {:?}", keepass_path);
