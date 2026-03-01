@@ -121,8 +121,7 @@ fn main() {
 /// `true` if the port is in use, `false` otherwise.
 fn is_port_in_use(port: u16) -> bool {
     use std::net::TcpListener;
-    let addr = format!("127.0.0.1:{port}");
-    TcpListener::bind(addr).is_err()
+    TcpListener::bind(("127.0.0.1", port)).is_err()
 }
 
 /// Runs the Actix webservice using the provided configuration.
