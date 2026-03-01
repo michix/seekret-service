@@ -25,7 +25,6 @@ serde = "1.0.219"
 serde_derive = "1.0.219"
 clap = { version = "4.5.40", features = ["derive"] }
 keepass = "0.8.3"
-simple_crypt = "0.2.3"
 rand = "0.9.1"
 chrono = "0.4.41"
 notify = "8.0.0"
