@@ -163,7 +163,7 @@ thread_local! {
 /// Empties the KeePass cache and resets the cache invalidation flag.
 fn empty_keepass_cache() {
     debug!("Emptying KeePass cache...");
-    SECRETS_MAP.set(HashMap::new());
+    SECRETS_MAP.with(|map| map.borrow_mut().clear());
     let mut guard = RESETCACHE.lock().unwrap();
     let _ = mem::replace(&mut *guard, false);
 }
@@ -193,15 +193,17 @@ fn get_entry_from_keepass_cache(
         debug!("Resetting KeePass cache because of timeout");
         empty_keepass_cache();
     }
-    let mut secrets_map = SECRETS_MAP.take();
-    if secrets_map.is_empty() {
-        secrets_map = fill_keepass_cache(config).expect("Filling KeePass cache failed");
-    }
-    let mut values: Option<HashMap<String, Vec<u8>>> = None;
-    if secrets_map.contains_key(entry_path) {
-        values = Some(secrets_map.get(entry_path).unwrap().clone());
-    }
-    SECRETS_MAP.set(secrets_map.clone());
+
+    let values = SECRETS_MAP.with(|map| {
+        let secrets_map = map.borrow_mut();
+        if secrets_map.is_empty() {
+            drop(secrets_map);
+            let new_map = fill_keepass_cache(config).expect("Filling KeePass cache failed");
+            *map.borrow_mut() = new_map;
+        }
+        map.borrow().get(entry_path).cloned()
+    });
+
     LAST_KEEPASS_ACCESS.set(Utc::now());
     values
 }
