@@ -258,7 +258,7 @@ fn db_to_map(db: Database) -> HashMap<String, HashMap<String, Vec<u8>>> {
     for node in &db.root.children {
         match node.into() {
             NodeRef::Group(group) => {
-                map = recurse_db(group, map, "".to_string());
+                recurse_db(group, &mut map, "");
             }
             NodeRef::Entry(e) => {
                 insert_map_values(e, "".into(), &mut map);
@@ -317,26 +317,24 @@ fn insert_map_values(
 /// The updated map with entries from the group.
 fn recurse_db(
     group: &keepass::db::Group,
-    mut map: HashMap<String, HashMap<String, Vec<u8>>>,
-    upper_prefix: String,
-) -> HashMap<String, HashMap<String, Vec<u8>>> {
+    map: &mut HashMap<String, HashMap<String, Vec<u8>>>,
+    upper_prefix: &str,
+) {
+    let prefix = format!("{}{}/", upper_prefix, group.name);
     debug!(
         "Entering group '{}' with prefix '{}'...",
-        group.name, upper_prefix
+        group.name, prefix
     );
-    let prefix = upper_prefix + &group.name + "/";
-    debug!("Got new prefix: {}", prefix);
     for node in &group.children {
         match node.into() {
-            NodeRef::Group(group) => {
-                map = recurse_db(group, map.clone(), prefix.clone());
+            NodeRef::Group(g) => {
+                recurse_db(g, map, &prefix);
             }
             NodeRef::Entry(e) => {
-                insert_map_values(e, prefix.clone(), &mut map);
+                insert_map_values(e, prefix.clone(), map);
             }
         }
     }
-    map
 }
 
 #[cfg(target_os = "linux")]
@@ -363,7 +361,10 @@ fn get_password_from_user() -> String {
 #[cfg(target_os = "windows")]
 fn get_password_from_user() -> String {
     debug!("Querying user for password...");
-    let password_window = &PasswordWindow::new(format!("Seekret Service {}: Please enter password", env!("CARGO_PKG_VERSION")));
+    let password_window = &PasswordWindow::new(format!(
+        "Seekret Service {}: Please enter password",
+        env!("CARGO_PKG_VERSION")
+    ));
     let result = password_window.run();
     match result {
         Ok(value) => value,
