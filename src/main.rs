@@ -14,7 +14,7 @@ use clap::Parser;
 use core::panic;
 use keepass::{db::NodeRef, error::DatabaseOpenError, Database, DatabaseKey};
 use log::{debug, info};
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::Path;
@@ -584,9 +584,20 @@ fn watch<P: AsRef<Path>>(path: P) -> notify::Result<()> {
 
     for res in rx {
         match res {
-            Ok(_event) => {
-                let mut guard = RESETCACHE.lock().unwrap();
-                let _ = mem::replace(&mut *guard, true);
+            Ok(event) => {
+                debug!("File watcher event: {:?}", event);
+                match event.kind {
+                    EventKind::Create(_)
+                    | EventKind::Modify(_)
+                    | EventKind::Remove(_) => {
+                        info!("KeePass file changed ({:?}), flagging cache for reset", event.kind);
+                        let mut guard = RESETCACHE.lock().unwrap();
+                        let _ = mem::replace(&mut *guard, true);
+                    }
+                    _ => {
+                        debug!("Ignoring non-modification file event: {:?}", event.kind);
+                    }
+                }
             }
             Err(error) => log::error!("An error occured monitoring the KeePass file: {error:?}"),
         }
