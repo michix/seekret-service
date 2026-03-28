@@ -1,17 +1,19 @@
 /// SSH Agent implementation for seekret-service (Linux/macOS only).
 ///
 /// Exposes SSH private keys from a KeePass database via the SSH agent protocol
-/// on a Unix domain socket. Signing requests are only served when the user has
-/// recently authorized access through the main HTTP authorization flow.
+/// on a Unix domain socket. SSH keys are fetched from the HTTP API instead of
+/// opening the KeePass database directly. Signing requests are only served when
+/// the user has recently authorized access through the main HTTP authorization
+/// flow.
 use chrono::{Duration, Utc};
-use keepass::{db::NodeRef, Database};
 use log::{debug, info, warn};
 use signature::Signer;
 use ssh_encoding::Encode;
 use ssh_key::PrivateKey;
 
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpStream;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -231,106 +233,115 @@ pub(crate) fn parse_ssh_string(d: &mut &[u8]) -> Option<Vec<u8>> {
     Some(data.to_vec())
 }
 
-/// Recursively searches a KeePass database for an entry at the given path.
+/// Performs a minimal HTTP GET request to localhost and returns the response body.
 ///
 /// # Arguments
 ///
-/// * `db` - The KeePass database.
-/// * `path` - Slash-separated path like "group/entry_name".
+/// * `port` - The HTTP server port.
+/// * `path` - The URL path to request (e.g. "/my-entry/ssh-key").
 ///
 /// # Returns
 ///
-/// The matching entry, if found.
-pub(crate) fn find_entry_by_path<'a>(
-    db: &'a Database,
-    path: &str,
-) -> Option<&'a keepass::db::Entry> {
-    fn walk<'b>(
-        nodes: &'b [keepass::db::Node],
-        segments: &[&str],
-    ) -> Option<&'b keepass::db::Entry> {
-        if segments.is_empty() {
-            return None;
+/// `Ok(body)` on HTTP 200, `Err(message)` on any error or non-200 status.
+fn http_get_localhost(port: u16, path: &str) -> Result<String, String> {
+    let addr = format!("127.0.0.1:{port}");
+    let mut stream =
+        TcpStream::connect(&addr).map_err(|e| format!("failed to connect to {addr}: {e}"))?;
+    let request =
+        format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|e| format!("failed to send request: {e}"))?;
+    stream
+        .flush()
+        .map_err(|e| format!("failed to flush: {e}"))?;
+
+    let mut reader = BufReader::new(stream);
+
+    // Parse status line
+    let mut status_line = String::new();
+    reader
+        .read_line(&mut status_line)
+        .map_err(|e| format!("failed to read status line: {e}"))?;
+    let status_code: u16 = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| format!("invalid status line: {status_line}"))?;
+
+    // Skip headers
+    loop {
+        let mut header = String::new();
+        reader
+            .read_line(&mut header)
+            .map_err(|e| format!("failed to read header: {e}"))?;
+        if header.trim().is_empty() {
+            break;
         }
-        for node in nodes {
-            match node.into() {
-                NodeRef::Group(g) => {
-                    if g.name == segments[0] {
-                        if segments.len() == 1 {
-                            return None; // path points to a group, not an entry
-                        }
-                        return walk(&g.children, &segments[1..]);
-                    }
-                    // Also search inside non-matching groups for the full path
-                    if let Some(e) = walk(&g.children, segments) {
-                        return Some(e);
-                    }
-                }
-                NodeRef::Entry(e) => {
-                    if segments.len() == 1 && e.get_title() == Some(segments[0]) {
-                        return Some(e);
-                    }
-                }
-            }
-        }
-        None
     }
-    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-    walk(&db.root.children, &segments)
+
+    // Read body
+    let mut body = String::new();
+    reader
+        .read_to_string(&mut body)
+        .map_err(|e| format!("failed to read body: {e}"))?;
+
+    if status_code == 200 {
+        Ok(body)
+    } else {
+        Err(format!("HTTP {status_code}: {body}"))
+    }
 }
 
-/// Extracts SSH private keys from KeePass entries.
+/// Fetches SSH private keys from the HTTP API.
 ///
-/// For each `--ssh-key` entry path, looks up the entry and attempts to parse
-/// the custom field `ssh-key` as an OpenSSH PEM private key. If the key is
-/// encrypted, it tries to decrypt using the Password field as the passphrase.
+/// For each entry path, fetches the `ssh-key` (PEM) and `secret` (passphrase)
+/// from the local HTTP service. If the key is encrypted, the passphrase from
+/// the `secret` endpoint is used to decrypt it.
 ///
 /// # Arguments
 ///
-/// * `db` - The opened KeePass database.
+/// * `port` - The HTTP server port.
 /// * `entry_paths` - KeePass entry paths to load SSH keys from.
 ///
 /// # Returns
 ///
 /// A vector of successfully loaded key records.
-pub(crate) fn extract_ssh_keys(db: &Database, entry_paths: &[String]) -> Vec<SshKeyRecord> {
+pub(crate) fn fetch_ssh_keys(port: u16, entry_paths: &[String]) -> Vec<SshKeyRecord> {
     let mut keys = Vec::new();
     for path in entry_paths {
-        let entry = match find_entry_by_path(db, path) {
-            Some(e) => e,
-            None => {
-                warn!("SSH agent: KeePass entry not found: '{path}'");
+        let pem = match http_get_localhost(port, &format!("/{path}/ssh-key")) {
+            Ok(p) => p,
+            Err(e) => {
+                warn!("SSH agent: failed to fetch ssh-key for '{path}': {e}");
                 continue;
             }
         };
 
-        // Read the SSH private key PEM from the custom field 'ssh-key'
-        let pem = match entry.get("ssh-key") {
-            Some(p) if !p.is_empty() => p,
-            _ => {
-                warn!("SSH agent: entry '{path}' has no 'ssh-key' custom field");
-                continue;
-            }
-        };
+        if pem.is_empty() {
+            warn!("SSH agent: entry '{path}' returned empty ssh-key");
+            continue;
+        }
 
-        let private_key = match PrivateKey::from_openssh(pem) {
+        let private_key = match PrivateKey::from_openssh(&pem) {
             Ok(key) => {
                 if key.is_encrypted() {
-                    // Use the Password field as the passphrase
-                    match entry.get_password() {
-                        Some(passphrase) if !passphrase.is_empty() => {
-                            match key.decrypt(passphrase) {
-                                Ok(decrypted) => decrypted,
-                                Err(e) => {
-                                    warn!("SSH agent: failed to decrypt key from '{path}': {e}");
-                                    continue;
-                                }
-                            }
+                    // Fetch the passphrase from the secret endpoint
+                    let passphrase = match http_get_localhost(port, &format!("/{path}/secret")) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            warn!("SSH agent: failed to fetch passphrase for '{path}': {e}");
+                            continue;
                         }
-                        _ => {
-                            warn!(
-                                "SSH agent: key in '{path}' is encrypted but Password field is empty"
-                            );
+                    };
+                    if passphrase.is_empty() {
+                        warn!("SSH agent: key in '{path}' is encrypted but secret is empty");
+                        continue;
+                    }
+                    match key.decrypt(&passphrase) {
+                        Ok(decrypted) => decrypted,
+                        Err(e) => {
+                            warn!("SSH agent: failed to decrypt key from '{path}': {e}");
                             continue;
                         }
                     }
@@ -356,22 +367,27 @@ pub(crate) fn extract_ssh_keys(db: &Database, entry_paths: &[String]) -> Vec<Ssh
 /// Starts the SSH agent, binding to a Unix socket and serving requests.
 ///
 /// This function blocks indefinitely (designed to run in a dedicated thread).
-/// It receives pre-extracted SSH keys (opened by `main()`) and serves SSH agent
-/// protocol requests. Signing is gated on recent user authorization through the
-/// main HTTP service.
+/// SSH keys are fetched from the local HTTP API on startup and refreshed
+/// whenever the KeePass file-change flag (`RESETCACHE`) is set. Signing is
+/// gated on recent user authorization through the main HTTP service.
 ///
 /// # Arguments
 ///
-/// * `keys` - Pre-extracted SSH key records from the KeePass database.
+/// * `port` - The HTTP server port to fetch SSH keys from.
+/// * `entry_paths` - KeePass entry paths containing SSH private keys.
 /// * `socket_path` - Path for the Unix domain socket.
 /// * `timeout_secs` - Authorization timeout in seconds (shared with HTTP service).
 /// * `use_touch_id` - Whether to use Touch ID for authorization prompts.
 pub fn run_agent(
-    keys: Vec<SshKeyRecord>,
+    port: u16,
+    entry_paths: Vec<String>,
     socket_path: PathBuf,
     timeout_secs: i64,
     use_touch_id: bool,
 ) {
+    // Fetch initial keys from the HTTP API
+    let keys = fetch_ssh_keys(port, &entry_paths);
+
     if keys.is_empty() {
         warn!("SSH agent: no SSH keys loaded — agent will start but have no identities");
     }
@@ -409,10 +425,13 @@ pub fn run_agent(
             Ok(mut sock) => {
                 debug!("SSH agent: new client connection");
                 while let Some(req) = read_agent_msg(&mut sock) {
-                    // Check if cache reset was flagged
+                    // Check if cache reset was flagged — reload keys from HTTP
                     let reset = *RESETCACHE.lock().unwrap();
                     if reset {
-                        info!("SSH agent: KeePass file changed — keys may be stale");
+                        info!("SSH agent: KeePass file changed — reloading keys from HTTP API");
+                        let new_keys = fetch_ssh_keys(port, &entry_paths);
+                        let mut st = state.lock().unwrap();
+                        st.keys = new_keys;
                     }
                     let reply = handle_request(&req, &state);
                     if write_agent_msg(&mut sock, &reply).is_err() {

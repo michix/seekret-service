@@ -50,11 +50,6 @@ static RESETCACHE: Mutex<bool> = Mutex::new(false);
 /// request always requires authorization.
 static LAST_USER_ACCESS: Mutex<Option<chrono::DateTime<Utc>>> = Mutex::new(None);
 
-/// Holds the password from the initial prompt (when SSH agent triggers an early
-/// DB open in main). Consumed once by `fill_keepass_cache` on the HTTP thread's
-/// first request so the user is not prompted a second time.
-static INITIAL_PASSWORD: Mutex<Option<String>> = Mutex::new(None);
-
 /// Secret service
 #[derive(Parser, Clone)]
 #[clap(
@@ -123,7 +118,7 @@ fn main() {
         );
     }
 
-    debug!("Watching file {:?}", keepass_path);
+    debug!("Watching file {}", keepass_path.display());
 
     thread::spawn(|| {
         if let Err(error) = watch(keepass_path) {
@@ -139,50 +134,8 @@ fn main() {
 
     // Start SSH agent if enabled (Linux/macOS only)
     #[cfg(not(target_os = "windows"))]
-    if config.enable_ssh_agent {
-        if config.ssh_key.is_empty() {
-            log::error!("SSH agent enabled but no --ssh-key entries specified");
-        } else {
-            // Open KeePass database once to extract SSH keys, then store the
-            // password so the HTTP thread can reuse it on its first cache fill.
-            let password = get_password_from_user();
-            let mut db_file = File::open(&config.keepass_path).expect("KeePass DB file not found");
-            let mut db_key = DatabaseKey::new().with_password(&password);
-            if let Some(ref keyfile_path) = config.keepass_keyfile {
-                let mut keyfile = File::open(keyfile_path).expect("KeePass key file not found");
-                db_key = db_key
-                    .with_keyfile(&mut keyfile)
-                    .expect("Failed to open KeePass key file");
-            }
-            match Database::open(&mut db_file, db_key) {
-                Ok(db) => {
-                    let ssh_keys = ssh_agent::extract_ssh_keys(&db, &config.ssh_key);
-                    // Store password for the HTTP thread's first cache fill
-                    *INITIAL_PASSWORD.lock().unwrap() = Some(password);
-
-                    let agent_timeout = config.timeout_authorization_in_seconds;
-                    let agent_use_touch_id = config.use_touch_id;
-                    let agent_socket = config.ssh_agent_sock.clone().unwrap_or_else(|| {
-                        let home =
-                            std::env::var("HOME").expect("HOME environment variable is not set");
-                        PathBuf::from(format!("{home}/.seekret-ssh-agent.sock"))
-                    });
-                    thread::spawn(move || {
-                        ssh_agent::run_agent(
-                            ssh_keys,
-                            agent_socket,
-                            agent_timeout,
-                            agent_use_touch_id,
-                        );
-                    });
-                }
-                Err(e) => {
-                    log::error!(
-                        "SSH agent: failed to open KeePass database: {e} — SSH agent will not start"
-                    );
-                }
-            }
-        }
+    if config.enable_ssh_agent && config.ssh_key.is_empty() {
+        log::error!("SSH agent enabled but no --ssh-key entries specified");
     }
 
     if is_port_in_use(config.port) {
@@ -326,6 +279,9 @@ fn run_main_run_loop() {
 /// background). On macOS the webservice runs on a background thread
 /// while the main thread stays in CFRunLoopRun for AppKit dialog support.
 ///
+/// If the SSH agent is enabled, its thread is spawned after the HTTP server
+/// is bound so that the agent can immediately fetch keys from the API.
+///
 /// # Arguments
 ///
 /// * `state` - The application configuration.
@@ -335,20 +291,48 @@ fn run_main_run_loop() {
 /// An `io::Result<()>` indicating success or failure.
 fn run_webservice(state: Config) -> io::Result<()> {
     actix_web::rt::System::new().block_on(async move {
-        let port = state.port.to_string();
-        info!("Starting secret service on port {port}");
-        HttpServer::new(move || {
+        let port = state.port;
+        let port_str = port.to_string();
+        info!("Starting secret service on port {port_str}");
+
+        // Extract SSH agent config before moving state into the closure
+        #[cfg(not(target_os = "windows"))]
+        let ssh_agent_config = if state.enable_ssh_agent && !state.ssh_key.is_empty() {
+            let agent_socket = state.ssh_agent_sock.clone().unwrap_or_else(|| {
+                let home = std::env::var("HOME").expect("HOME environment variable is not set");
+                PathBuf::from(format!("{home}/.seekret-ssh-agent.sock"))
+            });
+            Some((
+                state.ssh_key.clone(),
+                agent_socket,
+                state.timeout_authorization_in_seconds,
+                state.use_touch_id,
+            ))
+        } else {
+            None
+        };
+
+        let server = HttpServer::new(move || {
             App::new()
                 .service(get_secret)
                 .service(get_username)
                 .service(get_ssh_key)
                 .app_data(Data::new(state.clone()))
         })
-        .bind(format!("127.0.0.1:{port}"))?
+        .bind(format!("127.0.0.1:{port_str}"))?
         .workers(1)
         .client_request_timeout(std::time::Duration::new(60, 0))
-        .run()
-        .await
+        .run();
+
+        // Start SSH agent thread now that the HTTP server is bound and ready
+        #[cfg(not(target_os = "windows"))]
+        if let Some((entry_paths, agent_socket, timeout_secs, use_touch_id)) = ssh_agent_config {
+            thread::spawn(move || {
+                ssh_agent::run_agent(port, entry_paths, agent_socket, timeout_secs, use_touch_id);
+            });
+        }
+
+        server.await
     })
 }
 
@@ -422,11 +406,7 @@ fn fill_keepass_cache(
         keepass_path.to_str().expect("Filename not provided")
     );
 
-    let password = {
-        let mut guard = INITIAL_PASSWORD.lock().unwrap();
-        guard.take()
-    }
-    .unwrap_or_else(get_password_from_user);
+    let password = get_password_from_user();
     debug!("Password has length: {}", password.len());
     let mut keepass_db_file = File::open(keepass_path).expect("KeePass DB file not found");
     let mut key = DatabaseKey::new().with_password(&password);
