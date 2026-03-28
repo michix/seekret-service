@@ -39,6 +39,57 @@ For further help please run:
 seekret-service --help
 ----
 
+=== SSH Agent (Linux/macOS)
+
+Seekret Service can optionally act as an SSH agent, serving SSH private keys stored in your KeePass database.
+SSH clients (e.g. `ssh`, `git`) can then authenticate using keys from KeePass without ever writing private keys to disk.
+
+Signing requests are only allowed when the user has recently authorized access through the normal HTTP authorization flow (shared timeout).
+
+==== Storing SSH Keys in KeePass
+
+Store the OpenSSH PEM private key in a custom string field named `ssh-key` on a KeePass entry.
+If the key is encrypted with a passphrase, put the passphrase in the *Password* field of the same entry.
+
+==== Starting the SSH Agent
+
+Enable the agent with `--enable-ssh-agent` and specify one or more KeePass entry paths with `--ssh-key`:
+
+[source,bash]
+----
+seekret-service \
+  --keepass-path "/path/to/keepassfile.kdbx" \
+  --enable-ssh-agent \
+  --ssh-key "path/to/ssh-key-entry" \
+  --ssh-key "another/ssh-key-entry"
+----
+
+The agent listens on a Unix domain socket at `$HOME/.seekret-ssh-agent.sock` by default.
+You can override the socket path with `--ssh-agent-sock`:
+
+[source,bash]
+----
+seekret-service \
+  --keepass-path "/path/to/keepassfile.kdbx" \
+  --enable-ssh-agent \
+  --ssh-key "my-ssh-key" \
+  --ssh-agent-sock /tmp/my-custom-agent.sock
+----
+
+==== Using the SSH Agent
+
+Point the `SSH_AUTH_SOCK` environment variable at the agent socket:
+
+[source,bash]
+----
+export SSH_AUTH_SOCK="$HOME/.seekret-ssh-agent.sock"
+ssh-add -l          # list loaded keys
+ssh user@host       # authenticate using a KeePass-stored key
+----
+
+NOTE: Signing requests are denied silently when the authorization timeout has expired.
+Trigger a new authorization by making an HTTP request to the service first (e.g. `curl http://localhost:8123/some-entry/secret`).
+
 == Testing
 
 === Unit-Tests
@@ -52,7 +103,7 @@ RUST_LOG=debug cargo test -- --nocapture
 
 [source,bash]
 ----
-RUST_LOG=debug cargo run -- --keepass-path test.kdbx --keepass-keyfile test.key --port 8124
+RUST_LOG=debug cargo run -- --keepass-path test.kdbx --keepass-keyfile test.key --port 8124 --enable-ssh-agent --ssh-key "my-ssh-key"
 ----
 
 Test-keyfile `test.kdbx` with password `test` and keyfile `test.key`.
