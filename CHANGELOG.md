@@ -2,58 +2,70 @@
 
 ## Version 1
 
+### 1.3.0
+
+- (Feature) Adds support for `ssh-agent`.
+- (Feature) Adds native dialogs to MacOS.
+- (Fix) Fixes O(n²) recursion: map.clone() inside recurse_db causes quadratic memory allocation (done by MiniMax M2.5 with opencode).
+- (Fix) Corrects watching KeePass file for updates.
+- (Fix) Restores window focus on MacOS after showing dialogs.
+- (Chore) adds support for AI (testing).
+- (Chore) Adds version number to release binaries created in the GitHub.
+- (Chore) Removes simple_crypt which is not used anymore.
+- (Chore) Updates dependencies.
+
 ### 1.2.7
 
-* Adds version number to release binary file names
+- Adds version number to release binary file names
 
 ### 1.2.6
 
-* Adds application name and version number to all popup window titles
-* Updates dependencies
+- Adds application name and version number to all popup window titles
+- Updates dependencies
 
 ### 1.2.5
 
-* Updates dependencies
+- Updates dependencies
 
 ### 1.2.4
 
-* Adds check on startup if port is already in use
-* Updates dependencies
+- Adds check on startup if port is already in use
+- Updates dependencies
 
 ### 1.2.3
 
-* Fixes maximum password length in Windows dialog
-* Upgrades Dependencies
+- Fixes maximum password length in Windows dialog
+- Upgrades Dependencies
 
 ### 1.2.2
 
-* Switches from `simple_crypt` to `RustCrypto` (kudos to @xformerfhs)
+- Switches from `simple_crypt` to `RustCrypto` (kudos to @xformerfhs)
 
 ### 1.2.1
 
-* Fixes encryption in main memory
-* Upgrades Dependencies
+- Fixes encryption in main memory
+- Upgrades Dependencies
 
 ### 1.2.0
 
-* Monitors KeePass file and reloads it on change
+- Monitors KeePass file and reloads it on change
 
 ### 1.1.1
 
-* Fixes output of `--version`
-* Updates dependencies
+- Fixes output of `--version`
+- Updates dependencies
 
 ### 1.1.0
 
-* Adds Windows support
-* Updates dependencies
+- Adds Windows support
+- Updates dependencies
 
 ### 1.0.0
 
-* Renamed to Seekret-Service
+- Renamed to Seekret-Service
 
 ## Version 0
 
 ### 0.1.0
 
-* Initial Release
+- Initial Release
