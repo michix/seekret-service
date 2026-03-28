@@ -4,8 +4,14 @@ This service exposes secrets and usernames from a KeePass database file through 
 This way, secrets and usernames can be queried using `curl`.
 For security reasons, data read from the KeePass database is encrypted in memory.
 
+Since Version 1.3.0 the service also support the `ssh-agen` protocol.
+This means you can securly store your SSH keys in KeePass and acknowledge access to them manually!
+
 NOTE: This is my first project in Rust.
 There may be a lot of potential for  improvements -- of which I'm happy to hear!
+
+IMOORTANT: Since version 1.2.6 I am using various AI models for supporting me.
+I am reviewing the code but I believe that you have the right to know that.
 
 == Motivation
 
