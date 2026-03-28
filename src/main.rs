@@ -595,18 +595,26 @@ pub(crate) fn get_password_from_user() -> String {
     run_on_main_thread(|| {
         use objc2::msg_send;
         use objc2::sel;
-        use objc2_app_kit::{NSAlert, NSAlertFirstButtonReturn, NSApplication, NSSecureTextField};
+        use objc2_app_kit::{
+            NSAlert, NSAlertFirstButtonReturn, NSApplication,
+            NSApplicationActivationOptions, NSRunningApplication, NSSecureTextField, NSWorkspace,
+        };
         use objc2_foundation::{MainThreadMarker, NSString};
 
         // SAFETY: Guaranteed to be on the main thread by run_on_main_thread.
         let mtm = unsafe { MainThreadMarker::new_unchecked() };
         let app = NSApplication::sharedApplication(mtm);
 
+        // Remember which application had focus so we can restore it after the
+        // dialog is dismissed.
+        let previous_app: Option<objc2::rc::Retained<NSRunningApplication>> =
+            unsafe { NSWorkspace::sharedWorkspace().frontmostApplication() };
+
         // Bring the process to the front so the dialog is visible.
         #[allow(deprecated)]
         app.activateIgnoringOtherApps(true);
 
-        unsafe {
+        let result = unsafe {
             let alert = NSAlert::new(mtm);
             alert.setMessageText(&NSString::from_str(&format!(
                 "Seekret Service {}",
@@ -650,7 +658,19 @@ pub(crate) fn get_password_from_user() -> String {
             } else {
                 input.stringValue().to_string()
             }
+        };
+
+        // Restore focus to the application that was active before the dialog.
+        if let Some(prev) = previous_app {
+            #[allow(deprecated)]
+            unsafe {
+                prev.activateWithOptions(
+                    NSApplicationActivationOptions::NSApplicationActivateIgnoringOtherApps,
+                );
+            }
         }
+
+        result
     })
 }
 
@@ -735,9 +755,46 @@ pub(crate) fn user_authorization_dialog_touchid() -> bool {
         .expect("Cannot create Windows Text"),
     };
 
+    // Remember the frontmost application so focus can be restored afterward.
+    // NSRunningApplication is not Send, so we carry the raw pointer as a usize
+    // and only dereference it back on the main thread.
+    let previous_app_ptr: usize = run_on_main_thread(|| {
+        use objc2_app_kit::NSWorkspace;
+        use objc2::rc::Retained;
+        use objc2_app_kit::NSRunningApplication;
+        let app: Option<Retained<NSRunningApplication>> =
+            unsafe { NSWorkspace::sharedWorkspace().frontmostApplication() };
+        match app {
+            Some(a) => Retained::into_raw(a) as usize,
+            None => 0,
+        }
+    });
+
     Context::new(())
         .blocking_authenticate(text, &policy)
         .expect("Authentication failed");
+
+    // Restore focus to the application that was active before the dialog.
+    if previous_app_ptr != 0 {
+        run_on_main_thread(move || {
+            use objc2::rc::Retained;
+            use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
+            // SAFETY: The pointer was obtained from Retained::into_raw on the
+            // main thread above.  We reconstitute ownership here, also on the
+            // main thread, exactly once.
+            let prev: Retained<NSRunningApplication> = unsafe {
+                Retained::from_raw(previous_app_ptr as *mut NSRunningApplication)
+                    .expect("NSRunningApplication pointer was null")
+            };
+            #[allow(deprecated)]
+            unsafe {
+                prev.activateWithOptions(
+                    NSApplicationActivationOptions::NSApplicationActivateIgnoringOtherApps,
+                );
+            }
+        });
+    }
+
     true
 }
 
@@ -779,18 +836,26 @@ pub(crate) fn user_authorization_dialog_basic() -> bool {
     debug!("Querying user for authorization...");
 
     run_on_main_thread(|| {
-        use objc2_app_kit::{NSAlert, NSAlertFirstButtonReturn, NSAlertStyle, NSApplication};
+        use objc2_app_kit::{
+            NSAlert, NSAlertFirstButtonReturn, NSAlertStyle, NSApplication,
+            NSApplicationActivationOptions, NSRunningApplication, NSWorkspace,
+        };
         use objc2_foundation::{MainThreadMarker, NSString};
 
         // SAFETY: Guaranteed to be on the main thread by run_on_main_thread.
         let mtm = unsafe { MainThreadMarker::new_unchecked() };
         let app = NSApplication::sharedApplication(mtm);
 
+        // Remember which application had focus so we can restore it after the
+        // dialog is dismissed.
+        let previous_app: Option<objc2::rc::Retained<NSRunningApplication>> =
+            unsafe { NSWorkspace::sharedWorkspace().frontmostApplication() };
+
         // Bring the process to the front so the dialog is visible.
         #[allow(deprecated)]
         app.activateIgnoringOtherApps(true);
 
-        unsafe {
+        let result = unsafe {
             let alert = NSAlert::new(mtm);
             alert.setMessageText(&NSString::from_str(&format!(
                 "Seekret Service {}",
@@ -803,7 +868,19 @@ pub(crate) fn user_authorization_dialog_basic() -> bool {
 
             let response = alert.runModal();
             response == NSAlertFirstButtonReturn
+        };
+
+        // Restore focus to the application that was active before the dialog.
+        if let Some(prev) = previous_app {
+            #[allow(deprecated)]
+            unsafe {
+                prev.activateWithOptions(
+                    NSApplicationActivationOptions::NSApplicationActivateIgnoringOtherApps,
+                );
+            }
         }
+
+        result
     })
 }
 
