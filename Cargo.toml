@@ -33,6 +33,9 @@ chacha20poly1305 = "0.10.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 robius-authentication = "0.1.1"
+objc2 = "0.5.2"
+objc2-foundation = { version = "0.2.2", features = ["NSRunLoop", "NSThread"] }
+objc2-app-kit = { version = "0.2.2", features = ["NSAlert", "NSApplication", "NSButton", "NSEvent", "NSResponder", "NSRunningApplication", "NSView", "NSControl", "NSTextField", "NSSecureTextField", "NSWindow"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winsafe = { version = "0.0.24", features = ["gui"] }

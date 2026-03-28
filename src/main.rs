@@ -18,7 +18,7 @@ use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::Path;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 use std::process::Command;
 use std::str;
 use std::sync::Mutex;
@@ -94,6 +94,11 @@ pub struct Config {
 
 /// Initializes the logger, parses configuration, checks file existence,
 /// starts the file watcher thread, and launches the webservice.
+///
+/// On macOS the main thread is kept free for the CoreFoundation run loop so
+/// that GCD main-queue dispatch works for native AppKit dialogs. The Actix
+/// webservice is started on a background thread instead. On other platforms
+/// the webservice runs on the main thread as before.
 fn main() {
     env_logger::init();
     let config = Config::parse();
@@ -124,6 +129,12 @@ fn main() {
             log::error!("Error: {error:?}");
         }
     });
+
+    // On macOS: initialize NSApplication early so that native dialogs
+    // (e.g. the SSH-agent password prompt) can process keyboard events
+    // even before the main run loop starts.
+    #[cfg(target_os = "macos")]
+    init_nsapplication();
 
     // Start SSH agent if enabled (Linux/macOS only)
     #[cfg(not(target_os = "windows"))]
@@ -178,9 +189,38 @@ fn main() {
         return;
     }
 
-    info!("Starting webservice...");
-    let _result = run_webservice(config);
-    info!("Webservice stopped.");
+    // On macOS: run actix on a background thread and keep the main thread
+    // free to execute AppKit dialog closures dispatched from worker threads.
+    #[cfg(target_os = "macos")]
+    {
+        let (tx, rx) = std::sync::mpsc::channel::<Box<dyn FnOnce() + Send>>();
+        MAIN_THREAD_TX
+            .set(tx)
+            .expect("MAIN_THREAD_TX already initialized");
+        MAIN_THREAD_RX
+            .set(std::sync::Mutex::new(rx))
+            .expect("MAIN_THREAD_RX already initialized");
+
+        info!("Starting webservice...");
+        thread::spawn(move || {
+            let _result = run_webservice(config);
+            info!("Webservice stopped.");
+            std::process::exit(0);
+        });
+
+        // Run the CFRunLoop on the main thread. A repeating timer drains
+        // the work channel so that AppKit events are processed normally
+        // between dispatched closures.
+        run_main_run_loop();
+    }
+
+    // On non-macOS platforms: run the webservice on the main thread as before.
+    #[cfg(not(target_os = "macos"))]
+    {
+        info!("Starting webservice...");
+        let _result = run_webservice(config);
+        info!("Webservice stopped.");
+    }
 }
 
 /// Checks if a TCP port is already used by another process.
@@ -198,7 +238,92 @@ fn is_port_in_use(port: u16) -> bool {
     TcpListener::bind(addr).is_err()
 }
 
+/// Channel for dispatching closures to the main thread on macOS.
+///
+/// Background threads (actix worker, SSH agent) send boxed closures through
+/// this channel. The main thread receives and executes them, which guarantees
+/// AppKit operations happen on the correct thread.
+#[cfg(target_os = "macos")]
+static MAIN_THREAD_TX: std::sync::OnceLock<std::sync::mpsc::Sender<Box<dyn FnOnce() + Send>>> =
+    std::sync::OnceLock::new();
+
+/// Receiver end of the main-thread work channel.
+///
+/// Wrapped in a `Mutex` so it can be stored in a static and accessed from the
+/// `CFRunLoop` timer callback.
+#[cfg(target_os = "macos")]
+static MAIN_THREAD_RX: std::sync::OnceLock<
+    std::sync::Mutex<std::sync::mpsc::Receiver<Box<dyn FnOnce() + Send>>>,
+> = std::sync::OnceLock::new();
+
+/// Initializes NSApplication with the Accessory activation policy.
+///
+/// Must be called on the main thread before entering CFRunLoopRun so that
+/// AppKit is ready when dialogs are dispatched to the main thread later.
+#[cfg(target_os = "macos")]
+fn init_nsapplication() {
+    use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+    use objc2_foundation::MainThreadMarker;
+
+    // SAFETY: Called from the main thread during startup before CFRunLoopRun.
+    let mtm = unsafe { MainThreadMarker::new_unchecked() };
+    let app = NSApplication::sharedApplication(mtm);
+    app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+}
+
+/// Runs the main thread run loop on macOS, draining work items from the
+/// channel while keeping AppKit's event processing alive.
+///
+/// Uses the standard NSApplication event pump so that AppKit events
+/// (window close, redraw, etc.) are fully processed between work items.
+#[cfg(target_os = "macos")]
+fn run_main_run_loop() {
+    use objc2_app_kit::{NSApplication, NSEventMask};
+    use objc2_foundation::{MainThreadMarker, NSDefaultRunLoopMode};
+
+    // SAFETY: Called from the main thread during startup.
+    let mtm = unsafe { MainThreadMarker::new_unchecked() };
+    let app = NSApplication::sharedApplication(mtm);
+
+    loop {
+        // Pump all pending AppKit events.
+        loop {
+            let event = unsafe {
+                app.nextEventMatchingMask_untilDate_inMode_dequeue(
+                    NSEventMask::Any,
+                    None, // don't wait — return immediately if no events
+                    NSDefaultRunLoopMode,
+                    true,
+                )
+            };
+            match event {
+                Some(e) => unsafe { app.sendEvent(&e) },
+                None => break,
+            }
+        }
+
+        // Take one pending work item if available.
+        let work = MAIN_THREAD_RX.get().and_then(|rx_lock| {
+            let rx = rx_lock.try_lock().ok()?;
+            rx.try_recv().ok()
+        });
+        // Lock is released here. Execute outside the lock so that work()
+        // (which may call runModal and pump events) does not deadlock.
+        if let Some(w) = work {
+            w();
+            continue; // Check for more work / events immediately.
+        }
+
+        // No work and no events — sleep briefly to avoid busy-waiting.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
 /// Runs the Actix webservice using the provided configuration.
+///
+/// Creates its own actix runtime so it can run on any thread (main or
+/// background). On macOS the webservice runs on a background thread
+/// while the main thread stays in CFRunLoopRun for AppKit dialog support.
 ///
 /// # Arguments
 ///
@@ -207,21 +332,22 @@ fn is_port_in_use(port: u16) -> bool {
 /// # Returns
 ///
 /// An `io::Result<()>` indicating success or failure.
-#[actix_web::main]
-async fn run_webservice(state: Config) -> io::Result<()> {
-    let port = state.port.to_string();
-    info!("Starting secret service on port {port}");
-    HttpServer::new(move || {
-        App::new()
-            .service(get_secret)
-            .service(get_username)
-            .app_data(Data::new(state.clone()))
+fn run_webservice(state: Config) -> io::Result<()> {
+    actix_web::rt::System::new().block_on(async move {
+        let port = state.port.to_string();
+        info!("Starting secret service on port {port}");
+        HttpServer::new(move || {
+            App::new()
+                .service(get_secret)
+                .service(get_username)
+                .app_data(Data::new(state.clone()))
+        })
+        .bind(format!("127.0.0.1:{port}"))?
+        .workers(1)
+        .client_request_timeout(std::time::Duration::new(60, 0))
+        .run()
+        .await
     })
-    .bind(format!("127.0.0.1:{port}"))?
-    .workers(1)
-    .client_request_timeout(std::time::Duration::new(60, 0))
-    .run()
-    .await
 }
 
 thread_local! {
@@ -412,7 +538,7 @@ fn recurse_db(
 }
 
 #[cfg(target_os = "linux")]
-fn get_password_from_user() -> String {
+pub(crate) fn get_password_from_user() -> String {
     debug!("Querying user for password...");
     let mut get_password = Command::new("zenity");
     get_password
@@ -423,17 +549,122 @@ fn get_password_from_user() -> String {
     str::trim(str::from_utf8(&password.stdout).unwrap()).into()
 }
 
+/// Executes a closure on the macOS main thread, blocking until complete.
+///
+/// AppKit UI operations (e.g. `NSAlert::runModal`) must run on the main thread.
+/// This helper sends the work to the main thread via a channel when called from
+/// a background thread (e.g. an actix worker or the SSH-agent thread), and calls
+/// the closure directly when already on the main thread (e.g. during startup).
+///
+/// # Arguments
+///
+/// * `f` - The closure to execute on the main thread.
+///
+/// # Returns
+///
+/// The return value of the closure.
 #[cfg(target_os = "macos")]
-fn get_password_from_user() -> String {
+fn run_on_main_thread<T, F>(f: F) -> T
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    use objc2_foundation::NSThread;
+    if NSThread::isMainThread_class() {
+        f()
+    } else {
+        // Use a channel pair so the calling thread blocks until the main
+        // thread has finished executing the closure and sent back the result.
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        let work = Box::new(move || {
+            let val = f();
+            let _ = result_tx.send(val);
+        });
+        MAIN_THREAD_TX
+            .get()
+            .expect("MAIN_THREAD_TX not initialized")
+            .send(work)
+            .expect("Main thread channel closed");
+        result_rx.recv().expect("Main thread did not send result")
+    }
+}
+
+/// Queries the user for the KeePass database password using a native macOS dialog.
+///
+/// Uses NSAlert with an NSSecureTextField accessory view to display
+/// a native password input dialog with masked text entry.
+///
+/// # Returns
+///
+/// The password entered by the user, or an empty string if cancelled.
+#[cfg(target_os = "macos")]
+pub(crate) fn get_password_from_user() -> String {
     debug!("Querying user for password...");
-    let mut get_password = Command::new("osascript");
-    get_password.arg("-e").arg(format!("Tell application \"System Events\" to display dialog \"Please provide the password for your safe:\" with hidden answer default answer \"\" with title \"Seekret Service {}\"", env!("CARGO_PKG_VERSION"))).arg("-e").arg("text returned of result");
-    let password = get_password.output().expect("Password not provided");
-    str::trim(str::from_utf8(&password.stdout).unwrap()).into()
+
+    run_on_main_thread(|| {
+        use objc2::msg_send;
+        use objc2::sel;
+        use objc2_app_kit::{NSAlert, NSAlertFirstButtonReturn, NSApplication, NSSecureTextField};
+        use objc2_foundation::{MainThreadMarker, NSString};
+
+        // SAFETY: Guaranteed to be on the main thread by run_on_main_thread.
+        let mtm = unsafe { MainThreadMarker::new_unchecked() };
+        let app = NSApplication::sharedApplication(mtm);
+
+        // Bring the process to the front so the dialog is visible.
+        #[allow(deprecated)]
+        app.activateIgnoringOtherApps(true);
+
+        unsafe {
+            let alert = NSAlert::new(mtm);
+            alert.setMessageText(&NSString::from_str(&format!(
+                "Seekret Service {}",
+                env!("CARGO_PKG_VERSION")
+            )));
+            alert.setInformativeText(&NSString::from_str(
+                "Please provide the password for your safe:",
+            ));
+
+            let input = NSSecureTextField::initWithFrame(
+                mtm.alloc(),
+                objc2_foundation::NSRect::new(
+                    objc2_foundation::NSPoint::new(0.0, 0.0),
+                    objc2_foundation::NSSize::new(300.0, 24.0),
+                ),
+            );
+            input.setBezeled(true);
+            input.setEditable(true);
+
+            // Wire the text field so that pressing Return triggers the alert's
+            // OK button.  When NSTextField sends its action (on Return), the
+            // field editor commits typed text to stringValue first, then fires
+            // performClick: on the OK button which ends the modal session.
+            let buttons = alert.buttons();
+            let ok_button = &buttons[0];
+            input.setTarget(Some(ok_button));
+            input.setAction(Some(sel!(performClick:)));
+
+            alert.setAccessoryView(Some(input.as_ref()));
+
+            // Force the alert to lay out its view hierarchy, then tell the
+            // window which view should receive initial keyboard focus.
+            alert.layout();
+            let window = alert.window();
+            let input_ref: &NSSecureTextField = &input;
+            let _: () = msg_send![&window, setInitialFirstResponder: input_ref];
+
+            let response = alert.runModal();
+            if response == NSAlertFirstButtonReturn {
+                input.stringValue().to_string()
+            } else {
+                input.stringValue().to_string()
+            }
+        }
+    })
 }
 
 #[cfg(target_os = "windows")]
-fn get_password_from_user() -> String {
+pub(crate) fn get_password_from_user() -> String {
     debug!("Querying user for password...");
     let password_window = &PasswordWindow::new(format!(
         "Seekret Service {}: Please enter password",
@@ -484,7 +715,7 @@ fn get_user_authorization(config: &Config) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-fn user_authorization_dialog_touchid() -> bool {
+pub(crate) fn user_authorization_dialog_touchid() -> bool {
     use robius_authentication::{
         AndroidText, BiometricStrength, Context, Policy, PolicyBuilder, Text, WindowsText,
     };
@@ -520,17 +751,17 @@ fn user_authorization_dialog_touchid() -> bool {
 }
 
 #[cfg(target_os = "windows")]
-fn user_authorization_dialog_touchid() -> bool {
+pub(crate) fn user_authorization_dialog_touchid() -> bool {
     user_authorization_dialog_basic()
 }
 
 #[cfg(target_os = "linux")]
-fn user_authorization_dialog_touchid() -> bool {
+pub(crate) fn user_authorization_dialog_touchid() -> bool {
     user_authorization_dialog_basic()
 }
 
 #[cfg(target_os = "linux")]
-fn user_authorization_dialog_basic() -> bool {
+pub(crate) fn user_authorization_dialog_basic() -> bool {
     debug!("Querying user for authorization...");
     let mut get_autorization = Command::new("zenity");
     get_autorization
@@ -545,21 +776,48 @@ fn user_authorization_dialog_basic() -> bool {
     result.success()
 }
 
+/// Displays a native macOS confirmation dialog asking the user to approve access.
+///
+/// Uses NSAlert with OK and Cancel buttons to present a native confirmation dialog.
+///
+/// # Returns
+///
+/// `true` if the user clicks OK, `false` if cancelled.
 #[cfg(target_os = "macos")]
-fn user_authorization_dialog_basic() -> bool {
+pub(crate) fn user_authorization_dialog_basic() -> bool {
     debug!("Querying user for authorization...");
-    let mut get_autorization = Command::new("osascript");
-    get_autorization
-        .arg("-e")
-        .arg(format!("Tell application \"System Events\" to display dialog \"Please approve access...\" with title \"Seekret Service {}\"", env!("CARGO_PKG_VERSION")));
-    let result = get_autorization
-        .status()
-        .expect("Authorization from user aborted");
-    result.success()
+
+    run_on_main_thread(|| {
+        use objc2_app_kit::{NSAlert, NSAlertFirstButtonReturn, NSAlertStyle, NSApplication};
+        use objc2_foundation::{MainThreadMarker, NSString};
+
+        // SAFETY: Guaranteed to be on the main thread by run_on_main_thread.
+        let mtm = unsafe { MainThreadMarker::new_unchecked() };
+        let app = NSApplication::sharedApplication(mtm);
+
+        // Bring the process to the front so the dialog is visible.
+        #[allow(deprecated)]
+        app.activateIgnoringOtherApps(true);
+
+        unsafe {
+            let alert = NSAlert::new(mtm);
+            alert.setMessageText(&NSString::from_str(&format!(
+                "Seekret Service {}",
+                env!("CARGO_PKG_VERSION")
+            )));
+            alert.setInformativeText(&NSString::from_str("Please approve access..."));
+            alert.setAlertStyle(NSAlertStyle::Informational);
+            alert.addButtonWithTitle(&NSString::from_str("OK"));
+            alert.addButtonWithTitle(&NSString::from_str("Cancel"));
+
+            let response = alert.runModal();
+            response == NSAlertFirstButtonReturn
+        }
+    })
 }
 
 #[cfg(target_os = "windows")]
-fn user_authorization_dialog_basic() -> bool {
+pub(crate) fn user_authorization_dialog_basic() -> bool {
     debug!("Querying user for authorization...");
     let ok_abort_window = &OkAbortWindow::new(
         format!("Seekret Service {}", env!("CARGO_PKG_VERSION")),
@@ -670,10 +928,11 @@ fn watch<P: AsRef<Path>>(path: P) -> notify::Result<()> {
             Ok(event) => {
                 debug!("File watcher event: {:?}", event);
                 match event.kind {
-                    EventKind::Create(_)
-                    | EventKind::Modify(_)
-                    | EventKind::Remove(_) => {
-                        info!("KeePass file changed ({:?}), flagging cache for reset", event.kind);
+                    EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) => {
+                        info!(
+                            "KeePass file changed ({:?}), flagging cache for reset",
+                            event.kind
+                        );
                         let mut guard = RESETCACHE.lock().unwrap();
                         let _ = mem::replace(&mut *guard, true);
                     }
