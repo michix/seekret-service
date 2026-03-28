@@ -40,6 +40,7 @@ mod ssh_agent;
 
 const KEY_USERNAME: &str = "USN";
 const KEY_PASSWORD: &str = "PWD";
+const KEY_SSH_KEY: &str = "SSH";
 const KEY_NONCE: &str = "NON";
 
 static RESETCACHE: Mutex<bool> = Mutex::new(false);
@@ -340,6 +341,7 @@ fn run_webservice(state: Config) -> io::Result<()> {
             App::new()
                 .service(get_secret)
                 .service(get_username)
+                .service(get_ssh_key)
                 .app_data(Data::new(state.clone()))
         })
         .bind(format!("127.0.0.1:{port}"))?
@@ -500,6 +502,15 @@ fn insert_map_values(
     let mut value_map: HashMap<String, Vec<u8>> = HashMap::new();
     value_map.insert(KEY_USERNAME.into(), username);
     value_map.insert(KEY_PASSWORD.into(), password);
+    // Store the ssh-key custom field if present
+    if let Some(ssh_key_pem) = e.get("ssh-key") {
+        if !ssh_key_pem.is_empty() {
+            let encrypted_ssh_key = cipher
+                .encrypt(&nonce, ssh_key_pem.as_bytes())
+                .expect("Failed to encrypt ssh-key");
+            value_map.insert(KEY_SSH_KEY.into(), encrypted_ssh_key);
+        }
+    }
     value_map.insert(KEY_NONCE.into(), nonce.to_vec());
     map.insert(key, value_map);
 }
@@ -903,6 +914,49 @@ async fn get_username(path: web::Path<(String,)>, config: web::Data<Config>) -> 
     }
 }
 
+/// Actix handler for retrieving an SSH key from the KeePass database.
+///
+/// Returns the `ssh-key` custom field (plaintext PEM) for the given entry,
+/// or 404 if the entry does not exist or has no `ssh-key` field.
+///
+/// # Arguments
+///
+/// * `path` - The web path containing the entry path.
+/// * `config` - The application configuration.
+///
+/// # Returns
+///
+/// An HTTP response containing the decrypted SSH key PEM or an error.
+#[get("/{entry_path:.*}/ssh-key")]
+async fn get_ssh_key(path: web::Path<(String,)>, config: web::Data<Config>) -> impl Responder {
+    let entry_path = path.into_inner().0.to_string();
+    info!("Got request for: {entry_path}");
+
+    // Request access from user if last authorization has not been recently
+    if !get_user_authorization(config.get_ref()) {
+        return HttpResponse::Unauthorized().body("Access denied by user!");
+    }
+
+    let cipher = CIPHER.with(|c| c.borrow().clone());
+    let secret_entry = get_entry_from_keepass_cache(&entry_path, &config);
+    match secret_entry {
+        Some(secret_string) => match secret_string.get(KEY_SSH_KEY) {
+            Some(encrypted_ssh_key) => HttpResponse::Ok().body(
+                cipher
+                    .decrypt(
+                        Nonce::from_slice(secret_string.get(KEY_NONCE).unwrap()),
+                        encrypted_ssh_key.as_ref(),
+                    )
+                    .expect("Failed to decrypt ssh-key"),
+            ),
+            None => HttpResponse::build(StatusCode::NOT_FOUND)
+                .body(format!("No ssh-key found for: {entry_path}")),
+        },
+        None => HttpResponse::build(StatusCode::NOT_FOUND)
+            .body(format!("Failed to retrieve secret for: {entry_path}")),
+    }
+}
+
 /// Watches the specified path for changes and sets a flag to reset the cache on modification.
 ///
 /// # Arguments
@@ -966,5 +1020,91 @@ mod tests {
         for key in map.keys() {
             debug!(" - {}", key);
         }
+    }
+
+    #[test_log::test]
+    fn test_cache_contains_expected_keys() {
+        let mut db_file = File::open("test.kdbx").expect("File not found");
+        let mut key_file = File::open("test.key").expect("Key-file not found");
+        let key = DatabaseKey::new()
+            .with_password("test")
+            .with_keyfile(&mut key_file)
+            .expect("Failed to open key-file");
+        let db = Database::open(&mut db_file, key).expect("Failed to open database");
+        let map = db_to_map(db);
+
+        // Every entry must have username, password, and nonce
+        for (entry_path, value_map) in &map {
+            assert!(
+                value_map.contains_key(KEY_USERNAME),
+                "Entry '{entry_path}' missing username"
+            );
+            assert!(
+                value_map.contains_key(KEY_PASSWORD),
+                "Entry '{entry_path}' missing password"
+            );
+            assert!(
+                value_map.contains_key(KEY_NONCE),
+                "Entry '{entry_path}' missing nonce"
+            );
+        }
+
+        // Verify root_entry1 is present and can be decrypted
+        let root_entry = map.get("root_entry1").expect("root_entry1 not found");
+        let cipher = CIPHER.with(|c| c.borrow().clone());
+        let nonce = Nonce::from_slice(root_entry.get(KEY_NONCE).unwrap());
+        let decrypted_username = cipher
+            .decrypt(nonce, root_entry.get(KEY_USERNAME).unwrap().as_ref())
+            .expect("Failed to decrypt username");
+        assert_eq!(
+            str::from_utf8(&decrypted_username).unwrap(),
+            "root-username"
+        );
+        let decrypted_password = cipher
+            .decrypt(nonce, root_entry.get(KEY_PASSWORD).unwrap().as_ref())
+            .expect("Failed to decrypt password");
+        assert_eq!(
+            str::from_utf8(&decrypted_password).unwrap(),
+            "root-password"
+        );
+
+        // Entries without an ssh-key custom field must not have KEY_SSH_KEY
+        // (root_entry1 in the test database has no ssh-key)
+        assert!(
+            !root_entry.contains_key(KEY_SSH_KEY),
+            "root_entry1 should not have an ssh-key entry"
+        );
+    }
+
+    #[test_log::test]
+    fn test_ssh_key_cached_and_decryptable() {
+        let mut db_file = File::open("test.kdbx").expect("File not found");
+        let mut key_file = File::open("test.key").expect("Key-file not found");
+        let key = DatabaseKey::new()
+            .with_password("test")
+            .with_keyfile(&mut key_file)
+            .expect("Failed to open key-file");
+        let db = Database::open(&mut db_file, key).expect("Failed to open database");
+        let map = db_to_map(db);
+
+        // The test database has an entry 'my-ssh-key' with an ssh-key custom field
+        let ssh_entry = map.get("my-ssh-key").expect("my-ssh-key entry not found");
+        assert!(
+            ssh_entry.contains_key(KEY_SSH_KEY),
+            "my-ssh-key should have a cached ssh-key"
+        );
+
+        // Verify the ssh-key can be decrypted
+        let cipher = CIPHER.with(|c| c.borrow().clone());
+        let nonce = Nonce::from_slice(ssh_entry.get(KEY_NONCE).unwrap());
+        let decrypted_ssh_key = cipher
+            .decrypt(nonce, ssh_entry.get(KEY_SSH_KEY).unwrap().as_ref())
+            .expect("Failed to decrypt ssh-key");
+        let ssh_key_str = str::from_utf8(&decrypted_ssh_key).expect("ssh-key is not valid UTF-8");
+        assert!(
+            !ssh_key_str.is_empty(),
+            "Decrypted ssh-key should not be empty"
+        );
+        debug!("Decrypted ssh-key length: {}", ssh_key_str.len());
     }
 }
