@@ -30,6 +30,9 @@ chrono = "0.4.41"
 notify = "8.0.0"
 futures = "0.3.31"
 chacha20poly1305 = "0.10.1"
+ssh-key = { version = "0.6", features = ["crypto", "encryption"] }
+ssh-encoding = "0.2"
+signature = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 robius-authentication = "0.1.1"
@@ -39,11 +42,7 @@ objc2-app-kit = { version = "0.2.2", features = ["NSAlert", "NSApplication", "NS
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winsafe = { version = "0.0.24", features = ["gui"] }
-
-[target.'cfg(not(target_os = "windows"))'.dependencies]
-ssh-key = { version = "0.6", features = ["crypto", "encryption"] }
-ssh-encoding = "0.2"
-signature = "2"
+windows = { version = "0.58", features = ["Win32_System_Pipes", "Win32_Storage_FileSystem", "Win32_Foundation"] }
 
 [dev-dependencies]
 test-log = "0.2.17"

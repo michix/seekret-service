@@ -4,8 +4,8 @@ This service exposes secrets and usernames from a KeePass database file through 
 This way, secrets and usernames can be queried using `curl`.
 For security reasons, data read from the KeePass database is encrypted in memory.
 
-Since Version 1.3.0 the service also support the `ssh-agen` protocol.
-This means you can securly store your SSH keys in KeePass and acknowledge access to them manually!
+Since Version 1.4.0 the service also supports the `ssh-agent` protocol on all platforms (Linux, macOS, Windows).
+This means you can securely store your SSH keys in KeePass and acknowledge access to them manually!
 
 NOTE: This is my first project in Rust.
 There may be a lot of potential for  improvements -- of which I'm happy to hear!
@@ -92,6 +92,49 @@ export SSH_AUTH_SOCK="$HOME/.seekret-ssh-agent.sock"
 ssh-add -l          # list loaded keys
 ssh user@host       # authenticate using a KeePass-stored key
 ----
+
+NOTE: Signing requests are denied silently when the authorization timeout has expired.
+Trigger a new authorization by making an HTTP request to the service first (e.g. `curl http://localhost:8123/some-entry/secret`).
+
+=== SSH Agent (Windows)
+
+On Windows the SSH agent listens on a named pipe at `\\.\pipe\openssh-ssh-agent`, which is the standard path used by Windows OpenSSH clients (`ssh.exe`, Git for Windows, etc.).
+
+==== Starting the SSH Agent
+
+Enable the agent with `--enable-ssh-agent` and specify one or more KeePass entry paths with `--ssh-key`:
+
+[source,powershell]
+----
+seekret-service.exe `
+  --keepass-path "C:\path\to\keepassfile.kdbx" `
+  --enable-ssh-agent `
+  --ssh-key "path/to/ssh-key-entry"
+----
+
+The default pipe name is `\\.\pipe\openssh-ssh-agent`.
+You can override it with `--ssh-agent-sock`:
+
+[source,powershell]
+----
+seekret-service.exe `
+  --keepass-path "C:\path\to\keepassfile.kdbx" `
+  --enable-ssh-agent `
+  --ssh-key "my-ssh-key" `
+  --ssh-agent-sock "\\.\pipe\my-custom-ssh-agent"
+----
+
+==== Using the SSH Agent
+
+The Windows OpenSSH client automatically connects to the `\\.\pipe\openssh-ssh-agent` named pipe, so no environment variable is needed when using the default pipe name:
+
+[source,powershell]
+----
+ssh-add -l          # list loaded keys
+ssh user@host       # authenticate using a KeePass-stored key
+----
+
+NOTE: Make sure the Windows OpenSSH Authentication Agent service (`ssh-agent`) is stopped before starting seekret-service, as both would try to bind to the same pipe name.
 
 NOTE: Signing requests are denied silently when the authorization timeout has expired.
 Trigger a new authorization by making an HTTP request to the service first (e.g. `curl http://localhost:8123/some-entry/secret`).

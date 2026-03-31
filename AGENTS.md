@@ -1,12 +1,12 @@
 # AGENTS.md - Developer Guide for Seekret Service
 
-Seekret Service is a Rust daemon that exposes KeePass secrets via an HTTP API and optionally an SSH agent. Secrets are encrypted in memory with ChaCha20Poly1305. Platforms: Linux, macOS (Touch ID), Windows (native GUI). The SSH agent feature is Linux/macOS only.
+Seekret Service is a Rust daemon that exposes KeePass secrets via an HTTP API and optionally an SSH agent. Secrets are encrypted in memory with ChaCha20Poly1305. Platforms: Linux, macOS (Touch ID), Windows (native GUI). The SSH agent works on all three platforms (Unix socket on Linux/macOS, named pipe on Windows).
 
 ## Build / Test / Lint
 
 ```bash
 cargo build                          # dev build
-cargo build --release                # release (LTO, stripped)
+cargo build --release                # release (LTO, stripped, codegen-units=1)
 cargo check                          # type-check only
 
 RUST_LOG=debug cargo test -- --nocapture                          # all tests
@@ -20,11 +20,11 @@ cargo clippy -- -W clippy::all       # lint
 ./update-dependencies.sh             # update deps + build + test + clippy + fmt check
 ```
 
-**Test database:** `test.kdbx` (password `test`, keyfile `test.key`). Entries: `root_entry1` (user `root-username`, pass `root-password`), plus entries under `folder1/`, `folder1/folder1.1/`, `folder2/`.
+**Test database:** `test.kdbx` (password `test`, keyfile `test.key`). Entries: `root_entry1` (user `root-username`, pass `root-password`), `my-ssh-key` (has `ssh-key` custom field), plus entries under `folder1/`, `folder1/folder1.1/`, `folder2/`.
 
 **Manual integration test:**
 ```bash
-RUST_LOG=debug cargo run -- --keepass-path test.kdbx --keepass-keyfile test.key --port 8124
+RUST_LOG=debug cargo run -- --keepass-path test.kdbx --keepass-keyfile test.key --port 8124 --enable-ssh-agent --ssh-key "my-ssh-key"
 curl http://127.0.0.1:8124/root_entry1/secret
 curl http://127.0.0.1:8124/root_entry1/username
 ```
@@ -34,9 +34,9 @@ curl http://127.0.0.1:8124/root_entry1/username
 | File | Purpose |
 |------|---------|
 | `src/main.rs` | CLI config, HTTP server, KeePass cache, file watcher, auth dialogs, tests |
-| `src/ssh_agent.rs` | SSH agent protocol over Unix socket (non-Windows) |
-| `src/password_window.rs` | Windows-only password input dialog |
-| `src/ok_abort_window.rs` | Windows-only OK/Abort confirmation dialog |
+| `src/ssh_agent.rs` | SSH agent protocol (Unix socket on Linux/macOS, named pipe on Windows) |
+| `src/password_window.rs` | Windows-only password input dialog (`winsafe` GUI) |
+| `src/ok_abort_window.rs` | Windows-only OK/Abort confirmation dialog (`winsafe` GUI) |
 | `build.rs` | Links Windows resource file |
 | `update-dependencies.sh` | Automated dependency update pipeline |
 
@@ -48,7 +48,7 @@ curl http://127.0.0.1:8124/root_entry1/username
 - Always run `cargo fmt` — no custom `rustfmt.toml` exists
 
 ### Import Order
-Separate groups with blank lines:
+Group imports in this order, separated by blank lines:
 1. External crates (`actix_web`, `clap`, `keepass`, etc.)
 2. Standard library (`std::*`)
 3. Platform-conditional imports (`#[cfg(…)] use …`)
@@ -97,33 +97,42 @@ Use the `log` crate. Enable with `RUST_LOG=debug`.
 ### Platform-Specific Code
 ```rust
 #[cfg(target_os = "windows")] mod password_window;
-#[cfg(not(target_os = "windows"))] mod ssh_agent;
-#[cfg(any(target_os = "linux", target_os = "macos"))] use std::process::Command;
+#[cfg(target_os = "linux")]   use std::process::Command;
 ```
-Functions with per-platform implementations (e.g., `get_password_from_user`, `user_authorization_dialog_basic`) each have three `#[cfg]` variants. Use `pub(crate)` when cross-module access is needed.
+The `ssh_agent` module is compiled unconditionally on all platforms; platform differences are handled with `#[cfg]` gates inside the module (Unix socket vs named pipe). Functions with per-platform implementations (e.g., `get_password_from_user`, `user_authorization_dialog_basic`) each have three `#[cfg]` variants (linux, macos, windows). Use `pub(crate)` when cross-module access is needed.
 
 ### Thread Safety
 - `static Mutex<T>` — shared state across threads (`RESETCACHE`, `LAST_USER_ACCESS`)
 - `thread_local!` with `Cell`/`RefCell` — per-thread state (`SECRETS_MAP`, `CIPHER`, `LAST_KEEPASS_ACCESS`)
+- `OnceLock` — one-time initialized statics (macOS main-thread channel)
 - Actix server runs with `workers(1)` to keep thread-local state consistent
 - Background threads: file watcher, SSH agent (both via `std::thread::spawn`)
 
 ### Security Practices
 - In-memory encryption of all cached secrets (ChaCha20Poly1305 with random nonces)
 - Time-based authorization gating on both HTTP and SSH agent requests
-- SSH agent socket permissions set to `0600`; stale sockets cleaned up on start/exit
+- Unix: SSH agent socket permissions set to `0600`; stale sockets cleaned up on start/exit
+- Windows: named pipe uses default security (current user)
 - Cache cleared on file change or timeout
+
+### Testing
+- Tests use the `#[test_log::test]` attribute (from `test-log` dev dependency)
+- SSH agent tests set `prompt_on_deny: false` in `SshAgentState` to avoid GUI dialogs
+- Tests that modify global `LAST_USER_ACCESS` hold `AUTH_TEST_LOCK` for serialization
+- The Unix socket round-trip test is gated with `#[cfg(not(target_os = "windows"))]`
 
 ## Architecture
 
-- **HTTP API:** `/{path}/secret` and `/{path}/username` — Actix-web, single worker
+- **HTTP API:** `/{path}/secret`, `/{path}/username`, and `/{path}/ssh-key` — Actix-web, single worker
 - **KeePass cache:** thread-local `SECRETS_MAP` with encrypted values, timeout-based expiry, file-change reset
 - **Authorization:** `LAST_USER_ACCESS` static Mutex shared between HTTP handlers and SSH agent; platform-specific dialog prompts the user
 - **File watcher:** background thread sets `RESETCACHE` flag on KeePass file changes
-- **SSH agent:** optional (`--enable-ssh-agent`), runs on a Unix socket, serves SSH keys from KeePass entries, denies signing when authorization has expired
+- **SSH agent:** optional (`--enable-ssh-agent`); on Linux/macOS listens on a Unix socket, on Windows listens on a named pipe (`\\.\pipe\openssh-ssh-agent`); serves SSH keys from KeePass entries; denies signing when authorization has expired
+- **macOS main-thread:** AppKit dialogs must run on the main thread; actix runs on a background thread, closures are dispatched via `MAIN_THREAD_TX`/`MAIN_THREAD_RX` channels
 
 ## Commit Messages
 Use conventional commits, lowercase after prefix:
+- `feat:` new features
 - `fix:` bug fixes
 - `chore:` maintenance, dependency updates
 - `chore(deps):` dependency bumps

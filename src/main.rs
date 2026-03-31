@@ -35,7 +35,6 @@ use ok_abort_window::OkAbortWindow;
 #[cfg(target_os = "windows")]
 use password_window::PasswordWindow;
 
-#[cfg(not(target_os = "windows"))]
 mod ssh_agent;
 
 const KEY_USERNAME: &str = "USN";
@@ -77,13 +76,14 @@ pub struct Config {
     /// Use Touch ID on Mac
     #[arg(long, default_value_t = false)]
     use_touch_id: bool,
-    /// Enable SSH agent (Linux/macOS only)
+    /// Enable SSH agent
     #[arg(long, default_value_t = false)]
     enable_ssh_agent: bool,
     /// KeePass entry paths containing SSH private keys (repeatable)
     #[arg(long)]
     ssh_key: Vec<String>,
-    /// Custom SSH agent socket path (default: $HOME/.seekret-ssh-agent.sock)
+    /// Custom SSH agent socket path (default: $HOME/.seekret-ssh-agent.sock on
+    /// Unix, \\.\pipe\openssh-ssh-agent on Windows)
     #[arg(long)]
     ssh_agent_sock: Option<PathBuf>,
 }
@@ -132,8 +132,7 @@ fn main() {
     #[cfg(target_os = "macos")]
     init_nsapplication();
 
-    // Start SSH agent if enabled (Linux/macOS only)
-    #[cfg(not(target_os = "windows"))]
+    // Start SSH agent if enabled
     if config.enable_ssh_agent && config.ssh_key.is_empty() {
         log::error!("SSH agent enabled but no --ssh-key entries specified");
     }
@@ -312,6 +311,23 @@ fn run_webservice(state: Config) -> io::Result<()> {
             None
         };
 
+        #[cfg(target_os = "windows")]
+        let ssh_agent_config = if state.enable_ssh_agent && !state.ssh_key.is_empty() {
+            let pipe_name = state
+                .ssh_agent_sock
+                .as_ref()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| r"\\.\pipe\openssh-ssh-agent".to_string());
+            Some((
+                state.ssh_key.clone(),
+                pipe_name,
+                state.timeout_authorization_in_seconds,
+                state.use_touch_id,
+            ))
+        } else {
+            None
+        };
+
         let server = HttpServer::new(move || {
             App::new()
                 .service(get_secret)
@@ -329,6 +345,13 @@ fn run_webservice(state: Config) -> io::Result<()> {
         if let Some((entry_paths, agent_socket, timeout_secs, use_touch_id)) = ssh_agent_config {
             thread::spawn(move || {
                 ssh_agent::run_agent(port, entry_paths, agent_socket, timeout_secs, use_touch_id);
+            });
+        }
+
+        #[cfg(target_os = "windows")]
+        if let Some((entry_paths, pipe_name, timeout_secs, use_touch_id)) = ssh_agent_config {
+            thread::spawn(move || {
+                ssh_agent::run_agent(port, entry_paths, pipe_name, timeout_secs, use_touch_id);
             });
         }
 
@@ -596,8 +619,8 @@ pub(crate) fn get_password_from_user() -> String {
         use objc2::msg_send;
         use objc2::sel;
         use objc2_app_kit::{
-            NSAlert, NSAlertFirstButtonReturn, NSApplication,
-            NSApplicationActivationOptions, NSRunningApplication, NSSecureTextField, NSWorkspace,
+            NSAlert, NSAlertFirstButtonReturn, NSApplication, NSApplicationActivationOptions,
+            NSRunningApplication, NSSecureTextField, NSWorkspace,
         };
         use objc2_foundation::{MainThreadMarker, NSString};
 
@@ -759,9 +782,9 @@ pub(crate) fn user_authorization_dialog_touchid() -> bool {
     // NSRunningApplication is not Send, so we carry the raw pointer as a usize
     // and only dereference it back on the main thread.
     let previous_app_ptr: usize = run_on_main_thread(|| {
-        use objc2_app_kit::NSWorkspace;
         use objc2::rc::Retained;
         use objc2_app_kit::NSRunningApplication;
+        use objc2_app_kit::NSWorkspace;
         let app: Option<Retained<NSRunningApplication>> =
             unsafe { NSWorkspace::sharedWorkspace().frontmostApplication() };
         match app {
