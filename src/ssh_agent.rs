@@ -12,6 +12,7 @@ use signature::Signer;
 use ssh_encoding::Encode;
 use ssh_key::PrivateKey;
 
+#[cfg(not(target_os = "windows"))]
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
@@ -19,6 +20,7 @@ use std::net::TcpStream;
 use std::os::unix::fs::PermissionsExt;
 #[cfg(not(target_os = "windows"))]
 use std::os::unix::net::UnixListener;
+#[cfg(not(target_os = "windows"))]
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -502,9 +504,7 @@ pub fn run_agent(
     use_touch_id: bool,
 ) {
     use windows::core::HSTRING;
-    use windows::Win32::Foundation::{
-        CloseHandle, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE,
-    };
+    use windows::Win32::Foundation::{CloseHandle, ERROR_PIPE_CONNECTED, INVALID_HANDLE_VALUE};
     use windows::Win32::Storage::FileSystem::FlushFileBuffers;
     use windows::Win32::System::Pipes::{
         ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_ACCESS_DUPLEX,
