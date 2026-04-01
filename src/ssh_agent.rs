@@ -504,11 +504,11 @@ pub fn run_agent(
     use_touch_id: bool,
 ) {
     use windows::core::HSTRING;
-    use windows::Win32::Foundation::{CloseHandle, ERROR_PIPE_CONNECTED, INVALID_HANDLE_VALUE};
-    use windows::Win32::Storage::FileSystem::FlushFileBuffers;
+    use windows::Win32::Foundation::{CloseHandle, ERROR_PIPE_CONNECTED};
+    use windows::Win32::Storage::FileSystem::{FlushFileBuffers, PIPE_ACCESS_DUPLEX};
     use windows::Win32::System::Pipes::{
-        ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_ACCESS_DUPLEX,
-        PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT,
+        ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE,
+        PIPE_TYPE_BYTE, PIPE_WAIT,
     };
 
     // Fetch initial keys from the HTTP API
@@ -544,16 +544,11 @@ pub fn run_agent(
             )
         };
 
-        let pipe_handle = match pipe_handle {
-            Ok(h) => h,
-            Err(e) => {
-                log::error!("SSH agent: failed to create named pipe: {e}");
-                return;
-            }
-        };
-
-        if pipe_handle == INVALID_HANDLE_VALUE {
-            log::error!("SSH agent: CreateNamedPipeW returned INVALID_HANDLE_VALUE");
+        if pipe_handle.is_invalid() {
+            log::error!(
+                "SSH agent: CreateNamedPipeW failed: {}",
+                std::io::Error::last_os_error()
+            );
             return;
         }
 
