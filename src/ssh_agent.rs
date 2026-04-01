@@ -505,7 +505,7 @@ pub fn run_agent(
     use windows::Win32::Foundation::{
         CloseHandle, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE,
     };
-    use windows::Win32::Storage::FileSystem::{FlushFileBuffers, ReadFile, WriteFile};
+    use windows::Win32::Storage::FileSystem::FlushFileBuffers;
     use windows::Win32::System::Pipes::{
         ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_ACCESS_DUPLEX,
         PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT,
@@ -563,14 +563,15 @@ pub fn run_agent(
         let connect_result = unsafe { ConnectNamedPipe(pipe_handle, None) };
         match connect_result {
             Ok(()) => {}
-            Err(e) if e.code() == ERROR_PIPE_CONNECTED.to_hresult() => {
-                // Client connected between CreateNamedPipe and ConnectNamedPipe
-                debug!("SSH agent: client already connected");
-            }
             Err(e) => {
-                log::error!("SSH agent: ConnectNamedPipe failed: {e}");
-                let _ = unsafe { CloseHandle(pipe_handle) };
-                continue;
+                if e.code() == ERROR_PIPE_CONNECTED.to_hresult() {
+                    // Client connected between CreateNamedPipe and ConnectNamedPipe
+                    debug!("SSH agent: client already connected");
+                } else {
+                    log::error!("SSH agent: ConnectNamedPipe failed: {e}");
+                    let _ = unsafe { CloseHandle(pipe_handle) };
+                    continue;
+                }
             }
         }
 
