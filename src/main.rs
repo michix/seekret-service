@@ -656,7 +656,7 @@ pub(crate) fn get_password_from_user() -> String {
             if response == NSAlertFirstButtonReturn {
                 input.stringValue().to_string()
             } else {
-                input.stringValue().to_string()
+                String::new()
             }
         };
 

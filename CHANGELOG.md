@@ -2,6 +2,8 @@
 
 ## Version 1
 
+- (Fix) macOS password dialog returns typed input on Cancel instead of empty string.
+
 ### 1.3.0
 
 - (Feature) Adds support for `ssh-agent` (with Opus 4.6).
