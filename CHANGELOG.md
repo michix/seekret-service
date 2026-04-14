@@ -2,6 +2,9 @@
 
 ## Version 1
 
+### 1.4.0
+
+- (Feature) Adds support for `ssh-agent` on Windwos (with Opus 4.6).
 - (Fix) macOS password dialog returns typed input on Cancel instead of empty string.
 
 ### 1.3.0
@@ -11,7 +14,7 @@
 - (Fix) Fixes O(n²) recursion: map.clone() inside recurse_db causes quadratic memory allocation (done by MiniMax M2.5 with opencode).
 - (Fix) Corrects watching KeePass file for updates (with ChatGPT 4.1).
 - (Fix) Restores window focus on MacOS after showing dialogs (with Opus 4.6).
-- (Chore) adds support for AI (testing).
+- (Chore) Adds support for AI (testing).
 - (Chore) Adds version number to release binaries created in the GitHub.
 - (Chore) Removes simple_crypt which is not used anymore.
 - (Chore) Updates dependencies.

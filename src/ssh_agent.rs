@@ -1,23 +1,31 @@
-/// SSH Agent implementation for seekret-service (Linux/macOS only).
+/// SSH Agent implementation for seekret-service.
 ///
-/// Exposes SSH private keys from a KeePass database via the SSH agent protocol
-/// on a Unix domain socket. SSH keys are fetched from the HTTP API instead of
-/// opening the KeePass database directly. Signing requests are only served when
-/// the user has recently authorized access through the main HTTP authorization
-/// flow.
+/// Exposes SSH private keys from a KeePass database via the SSH agent protocol.
+/// On Linux/macOS a Unix domain socket is used; on Windows a named pipe at
+/// `\\.\pipe\openssh-ssh-agent` provides the same functionality. SSH keys are
+/// fetched from the HTTP API instead of opening the KeePass database directly.
+/// Signing requests are only served when the user has recently authorized
+/// access through the main HTTP authorization flow.
 use chrono::{Duration, Utc};
 use log::{debug, info, warn};
 use signature::Signer;
 use ssh_encoding::Encode;
 use ssh_key::PrivateKey;
 
+#[cfg(not(target_os = "windows"))]
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
+#[cfg(not(target_os = "windows"))]
 use std::os::unix::fs::PermissionsExt;
-use std::os::unix::net::{UnixListener, UnixStream};
+#[cfg(not(target_os = "windows"))]
+use std::os::unix::net::UnixListener;
+#[cfg(not(target_os = "windows"))]
 use std::path::PathBuf;
 use std::sync::Mutex;
+
+#[cfg(target_os = "windows")]
+use std::io::{Error as IoError, ErrorKind};
 
 use crate::LAST_USER_ACCESS;
 use crate::RESETCACHE;
@@ -48,10 +56,14 @@ pub(crate) struct SshAgentState {
 
 /// Reads one SSH agent protocol message from the stream.
 ///
+/// # Arguments
+///
+/// * `stream` - Any readable stream implementing `Read`.
+///
 /// # Returns
 ///
 /// `Some(data)` on success, `None` on EOF or protocol error.
-pub(crate) fn read_agent_msg(stream: &mut UnixStream) -> Option<Vec<u8>> {
+pub(crate) fn read_agent_msg(stream: &mut impl Read) -> Option<Vec<u8>> {
     let mut len_buf = [0u8; 4];
     if stream.read_exact(&mut len_buf).is_err() {
         return None;
@@ -69,7 +81,16 @@ pub(crate) fn read_agent_msg(stream: &mut UnixStream) -> Option<Vec<u8>> {
 }
 
 /// Writes one SSH agent protocol message to the stream.
-pub(crate) fn write_agent_msg(stream: &mut UnixStream, msg: &[u8]) -> std::io::Result<()> {
+///
+/// # Arguments
+///
+/// * `stream` - Any writable stream implementing `Write`.
+/// * `msg` - The message payload to send.
+///
+/// # Returns
+///
+/// An `io::Result<()>` indicating success or failure.
+pub(crate) fn write_agent_msg(stream: &mut impl Write, msg: &[u8]) -> std::io::Result<()> {
     let len = msg.len() as u32;
     stream.write_all(&len.to_be_bytes())?;
     stream.write_all(msg)?;
@@ -364,7 +385,8 @@ pub(crate) fn fetch_ssh_keys(port: u16, entry_paths: &[String]) -> Vec<SshKeyRec
     keys
 }
 
-/// Starts the SSH agent, binding to a Unix socket and serving requests.
+/// Starts the SSH agent on Linux/macOS, binding to a Unix socket and serving
+/// requests.
 ///
 /// This function blocks indefinitely (designed to run in a dedicated thread).
 /// SSH keys are fetched from the local HTTP API on startup and refreshed
@@ -378,6 +400,7 @@ pub(crate) fn fetch_ssh_keys(port: u16, entry_paths: &[String]) -> Vec<SshKeyRec
 /// * `socket_path` - Path for the Unix domain socket.
 /// * `timeout_secs` - Authorization timeout in seconds (shared with HTTP service).
 /// * `use_touch_id` - Whether to use Touch ID for authorization prompts.
+#[cfg(not(target_os = "windows"))]
 pub fn run_agent(
     port: u16,
     entry_paths: Vec<String>,
@@ -451,12 +474,183 @@ pub fn run_agent(
     info!("SSH agent: stopped");
 }
 
+/// Starts the SSH agent on Windows, binding to the OpenSSH named pipe and
+/// serving requests.
+///
+/// The pipe is created at `\\.\pipe\openssh-ssh-agent` which is the standard
+/// path that Windows OpenSSH clients (`ssh.exe`, Git for Windows, etc.)
+/// connect to. Each client connection is handled sequentially on the agent
+/// thread. The pipe is configured with a security descriptor that restricts
+/// access to the current user.
+///
+/// This function blocks indefinitely (designed to run in a dedicated thread).
+/// SSH keys are fetched from the local HTTP API on startup and refreshed
+/// whenever the KeePass file-change flag (`RESETCACHE`) is set. Signing is
+/// gated on recent user authorization through the main HTTP service.
+///
+/// # Arguments
+///
+/// * `port` - The HTTP server port to fetch SSH keys from.
+/// * `entry_paths` - KeePass entry paths containing SSH private keys.
+/// * `pipe_name` - The named pipe path (e.g. `\\.\pipe\openssh-ssh-agent`).
+/// * `timeout_secs` - Authorization timeout in seconds (shared with HTTP service).
+/// * `use_touch_id` - Whether to use Touch ID/Windows Hello for authorization prompts.
+#[cfg(target_os = "windows")]
+pub fn run_agent(
+    port: u16,
+    entry_paths: Vec<String>,
+    pipe_name: String,
+    timeout_secs: i64,
+    use_touch_id: bool,
+) {
+    use windows::core::HSTRING;
+    use windows::Win32::Foundation::{CloseHandle, ERROR_PIPE_CONNECTED};
+    use windows::Win32::Storage::FileSystem::{FlushFileBuffers, PIPE_ACCESS_DUPLEX};
+    use windows::Win32::System::Pipes::{
+        ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE,
+        PIPE_TYPE_BYTE, PIPE_WAIT,
+    };
+
+    // Fetch initial keys from the HTTP API
+    let keys = fetch_ssh_keys(port, &entry_paths);
+
+    if keys.is_empty() {
+        warn!("SSH agent: no SSH keys loaded — agent will start but have no identities");
+    }
+
+    info!("SSH agent: creating named pipe at {pipe_name}");
+
+    let state = Mutex::new(SshAgentState {
+        keys,
+        timeout_secs,
+        use_touch_id,
+        prompt_on_deny: true,
+    });
+
+    let pipe_name_h = HSTRING::from(&pipe_name);
+
+    loop {
+        // Create a new instance of the named pipe for each client
+        let pipe_handle = unsafe {
+            CreateNamedPipeW(
+                &pipe_name_h,
+                PIPE_ACCESS_DUPLEX,
+                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                255,  // max instances
+                4096, // out buffer size
+                4096, // in buffer size
+                0,    // default timeout
+                None, // default security (current user)
+            )
+        };
+
+        if pipe_handle.is_invalid() {
+            log::error!(
+                "SSH agent: CreateNamedPipeW failed: {}",
+                std::io::Error::last_os_error()
+            );
+            return;
+        }
+
+        info!("SSH agent: waiting for client connection on {pipe_name}");
+
+        // Wait for a client to connect
+        let connect_result = unsafe { ConnectNamedPipe(pipe_handle, None) };
+        match connect_result {
+            Ok(()) => {}
+            Err(e) => {
+                if e.code() == ERROR_PIPE_CONNECTED.to_hresult() {
+                    // Client connected between CreateNamedPipe and ConnectNamedPipe
+                    debug!("SSH agent: client already connected");
+                } else {
+                    log::error!("SSH agent: ConnectNamedPipe failed: {e}");
+                    let _ = unsafe { CloseHandle(pipe_handle) };
+                    continue;
+                }
+            }
+        }
+
+        debug!("SSH agent: new client connection");
+
+        // Wrap the pipe handle in a struct implementing Read + Write
+        let mut pipe_stream = NamedPipeStream {
+            handle: pipe_handle,
+        };
+
+        while let Some(req) = read_agent_msg(&mut pipe_stream) {
+            // Check if cache reset was flagged — reload keys from HTTP
+            let reset = *RESETCACHE.lock().unwrap();
+            if reset {
+                info!("SSH agent: KeePass file changed — reloading keys from HTTP API");
+                let new_keys = fetch_ssh_keys(port, &entry_paths);
+                let mut st = state.lock().unwrap();
+                st.keys = new_keys;
+            }
+            let reply = handle_request(&req, &state);
+            if write_agent_msg(&mut pipe_stream, &reply).is_err() {
+                break;
+            }
+        }
+
+        // Disconnect and close the pipe instance
+        let _ = unsafe { FlushFileBuffers(pipe_handle) };
+        let _ = unsafe { DisconnectNamedPipe(pipe_handle) };
+        let _ = unsafe { CloseHandle(pipe_handle) };
+    }
+}
+
+/// Wrapper around a Windows named pipe `HANDLE` that implements `Read` and
+/// `Write` so the generic `read_agent_msg` / `write_agent_msg` functions can
+/// operate on it.
+#[cfg(target_os = "windows")]
+struct NamedPipeStream {
+    handle: windows::Win32::Foundation::HANDLE,
+}
+
+#[cfg(target_os = "windows")]
+impl Read for NamedPipeStream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        use windows::Win32::Storage::FileSystem::ReadFile;
+
+        let mut bytes_read = 0u32;
+        unsafe {
+            ReadFile(self.handle, Some(buf), Some(&mut bytes_read), None)
+                .map_err(|e| IoError::new(ErrorKind::Other, format!("ReadFile failed: {e}")))?;
+        }
+        Ok(bytes_read as usize)
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Write for NamedPipeStream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        use windows::Win32::Storage::FileSystem::WriteFile;
+
+        let mut bytes_written = 0u32;
+        unsafe {
+            WriteFile(self.handle, Some(buf), Some(&mut bytes_written), None)
+                .map_err(|e| IoError::new(ErrorKind::Other, format!("WriteFile failed: {e}")))?;
+        }
+        Ok(bytes_written as usize)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        use windows::Win32::Storage::FileSystem::FlushFileBuffers;
+
+        unsafe {
+            FlushFileBuffers(self.handle).map_err(|e| {
+                IoError::new(ErrorKind::Other, format!("FlushFileBuffers failed: {e}"))
+            })?;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::Utc;
     use ssh_key::{rand_core::OsRng, Algorithm, PrivateKey};
-    use std::os::unix::net::UnixStream;
     use std::sync::Mutex;
 
     /// Serializes tests that read/write the global LAST_USER_ACCESS static.
@@ -740,10 +934,11 @@ mod tests {
 
     // ── Full round-trip over Unix socket ─────────────────────────────
 
+    #[cfg(not(target_os = "windows"))]
     #[test_log::test]
     fn test_agent_socket_round_trip() {
         let _lock = AUTH_TEST_LOCK.lock().unwrap();
-        use std::os::unix::net::UnixListener;
+        use std::os::unix::net::{UnixListener, UnixStream};
         use std::thread;
 
         let socket_path =
