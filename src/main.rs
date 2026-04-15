@@ -654,9 +654,9 @@ pub(crate) fn get_password_from_user() -> String {
 
             let response = alert.runModal();
             if response == NSAlertFirstButtonReturn {
-                input.stringValue().to_string()
-            } else {
                 String::new()
+            } else {
+                input.stringValue().to_string()
             }
         };
 
