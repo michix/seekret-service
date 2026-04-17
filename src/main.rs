@@ -302,12 +302,7 @@ fn run_webservice(state: Config) -> io::Result<()> {
                 let home = std::env::var("HOME").expect("HOME environment variable is not set");
                 PathBuf::from(format!("{home}/.seekret-ssh-agent.sock"))
             });
-            Some((
-                state.ssh_key.clone(),
-                agent_socket,
-                state.timeout_authorization_in_seconds,
-                state.use_touch_id,
-            ))
+            Some((state.ssh_key.clone(), agent_socket))
         } else {
             None
         };
@@ -326,9 +321,9 @@ fn run_webservice(state: Config) -> io::Result<()> {
 
         // Start SSH agent thread now that the HTTP server is bound and ready
         #[cfg(not(target_os = "windows"))]
-        if let Some((entry_paths, agent_socket, timeout_secs, use_touch_id)) = ssh_agent_config {
+        if let Some((entry_paths, agent_socket)) = ssh_agent_config {
             thread::spawn(move || {
-                ssh_agent::run_agent(port, entry_paths, agent_socket, timeout_secs, use_touch_id);
+                ssh_agent::run_agent(port, entry_paths, agent_socket);
             });
         }
 
@@ -596,8 +591,8 @@ pub(crate) fn get_password_from_user() -> String {
         use objc2::msg_send;
         use objc2::sel;
         use objc2_app_kit::{
-            NSAlert, NSAlertFirstButtonReturn, NSApplication,
-            NSApplicationActivationOptions, NSRunningApplication, NSSecureTextField, NSWorkspace,
+            NSAlert, NSAlertFirstButtonReturn, NSApplication, NSApplicationActivationOptions,
+            NSRunningApplication, NSSecureTextField, NSWorkspace,
         };
         use objc2_foundation::{MainThreadMarker, NSString};
 
@@ -759,9 +754,9 @@ pub(crate) fn user_authorization_dialog_touchid() -> bool {
     // NSRunningApplication is not Send, so we carry the raw pointer as a usize
     // and only dereference it back on the main thread.
     let previous_app_ptr: usize = run_on_main_thread(|| {
-        use objc2_app_kit::NSWorkspace;
         use objc2::rc::Retained;
         use objc2_app_kit::NSRunningApplication;
+        use objc2_app_kit::NSWorkspace;
         let app: Option<Retained<NSRunningApplication>> =
             unsafe { NSWorkspace::sharedWorkspace().frontmostApplication() };
         match app {

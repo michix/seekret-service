@@ -2,6 +2,7 @@
 
 ## Version 1
 
+- (Fix) Obtains private key for `ssh_agent` always from core service instead of keeping it in an unencrypted cache.
 - (Fix) macOS password dialog returns typed input on Cancel instead of empty string.
 
 ### 1.3.0
