@@ -2,7 +2,7 @@ use actix_web::{
     get,
     http::StatusCode,
     web::{self, Data},
-    App, HttpResponse, HttpServer, Responder,
+    App, HttpRequest, HttpResponse, HttpServer, Responder,
 };
 use chacha20poly1305::Nonce;
 use chacha20poly1305::{
@@ -688,11 +688,13 @@ pub(crate) fn get_password_from_user() -> String {
 /// # Arguments
 ///
 /// * `config` - The application configuration.
+/// * `source` - An optional string describing the source of the request,
+///              displayed in the authorization dialog.
 ///
 /// # Returns
 ///
 /// `true` if authorization is granted, `false` otherwise.
-fn get_user_authorization(config: &Config) -> bool {
+fn get_user_authorization(config: &Config, source: Option<&str>) -> bool {
     let mut authorization_given = true;
     // Only ask if the user has not acknowledged recently
     let needs_auth = {
@@ -708,9 +710,9 @@ fn get_user_authorization(config: &Config) -> bool {
     };
     if needs_auth {
         if config.use_touch_id {
-            authorization_given = user_authorization_dialog_touchid();
+            authorization_given = user_authorization_dialog_touchid(source);
         } else {
-            authorization_given = user_authorization_dialog_basic();
+            authorization_given = user_authorization_dialog_basic(source);
         }
     }
     if authorization_given {
@@ -721,7 +723,7 @@ fn get_user_authorization(config: &Config) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn user_authorization_dialog_touchid() -> bool {
+pub(crate) fn user_authorization_dialog_touchid(source: Option<&str>) -> bool {
     use robius_authentication::{
         AndroidText, BiometricStrength, Context, Policy, PolicyBuilder, Text, WindowsText,
     };
@@ -734,20 +736,23 @@ pub(crate) fn user_authorization_dialog_touchid() -> bool {
         .unwrap();
 
     let title = format!("Seekret Service {}", env!("CARGO_PKG_VERSION"));
+    let subtitle = match source {
+        Some(s) => format!(
+            "Please authorize access to Secret Service which has been requested.\n\nRequested by: {s}"
+        ),
+        None => {
+            "Please authorize access to Secret Service which has been requested.".to_owned()
+        }
+    };
     let text = Text {
         android: AndroidText {
             title: &title,
-            subtitle: Some("Please authorize access to Secret Service which has been requested."),
-            description: Some(
-                "Please authorize access to Secret Service which has been requested.",
-            ),
+            subtitle: Some(&subtitle),
+            description: Some(&subtitle),
         },
         apple: &title,
-        windows: WindowsText::new(
-            &title,
-            "Please authorize access to Secret Service which has been requested.",
-        )
-        .expect("Cannot create Windows Text"),
+        windows: WindowsText::new(&title, &subtitle)
+            .expect("Cannot create Windows Text"),
     };
 
     // Remember the frontmost application so focus can be restored afterward.
@@ -794,25 +799,29 @@ pub(crate) fn user_authorization_dialog_touchid() -> bool {
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) fn user_authorization_dialog_touchid() -> bool {
-    user_authorization_dialog_basic()
+pub(crate) fn user_authorization_dialog_touchid(source: Option<&str>) -> bool {
+    user_authorization_dialog_basic(source)
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn user_authorization_dialog_touchid() -> bool {
-    user_authorization_dialog_basic()
+pub(crate) fn user_authorization_dialog_touchid(source: Option<&str>) -> bool {
+    user_authorization_dialog_basic(source)
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn user_authorization_dialog_basic() -> bool {
+pub(crate) fn user_authorization_dialog_basic(source: Option<&str>) -> bool {
     debug!("Querying user for authorization...");
+    let text = match source {
+        Some(s) => format!("Do you want to allow access to Secret Service?\n\nRequested by: {s}"),
+        None => "Do you want to allow access to Secret Service?".to_owned(),
+    };
     let mut get_autorization = Command::new("zenity");
     get_autorization
         .arg("--question")
         .arg("--title")
         .arg(format!("Seekret Service {}", env!("CARGO_PKG_VERSION")))
         .arg("--text")
-        .arg("Do you want to allow access to Secret Service?");
+        .arg(text);
     let result = get_autorization
         .status()
         .expect("Authorization from user aborted");
@@ -823,14 +832,22 @@ pub(crate) fn user_authorization_dialog_basic() -> bool {
 ///
 /// Uses NSAlert with OK and Cancel buttons to present a native confirmation dialog.
 ///
+/// # Arguments
+///
+/// * `source` - An optional string describing the source of the request.
+///
 /// # Returns
 ///
 /// `true` if the user clicks OK, `false` if cancelled.
 #[cfg(target_os = "macos")]
-pub(crate) fn user_authorization_dialog_basic() -> bool {
+pub(crate) fn user_authorization_dialog_basic(source: Option<&str>) -> bool {
     debug!("Querying user for authorization...");
+    let informative_text = match source {
+        Some(s) => format!("Please approve access...\n\nRequested by: {s}"),
+        None => "Please approve access...".to_owned(),
+    };
 
-    run_on_main_thread(|| {
+    run_on_main_thread(move || {
         use objc2_app_kit::{
             NSAlert, NSAlertFirstButtonReturn, NSAlertStyle, NSApplication,
             NSApplicationActivationOptions, NSRunningApplication, NSWorkspace,
@@ -856,7 +873,7 @@ pub(crate) fn user_authorization_dialog_basic() -> bool {
                 "Seekret Service {}",
                 env!("CARGO_PKG_VERSION")
             )));
-            alert.setInformativeText(&NSString::from_str("Please approve access..."));
+            alert.setInformativeText(&NSString::from_str(&informative_text));
             alert.setAlertStyle(NSAlertStyle::Informational);
             alert.addButtonWithTitle(&NSString::from_str("OK"));
             alert.addButtonWithTitle(&NSString::from_str("Cancel"));
@@ -880,11 +897,17 @@ pub(crate) fn user_authorization_dialog_basic() -> bool {
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) fn user_authorization_dialog_basic() -> bool {
+pub(crate) fn user_authorization_dialog_basic(source: Option<&str>) -> bool {
     debug!("Querying user for authorization...");
+    let text = match source {
+        Some(s) => format!(
+            "Please confirm access to KeePass from SeekretService...\n\nRequested by: {s}"
+        ),
+        None => "Please confirm access to KeePass from SeekretService...".to_owned(),
+    };
     let ok_abort_window = &OkAbortWindow::new(
         format!("Seekret Service {}", env!("CARGO_PKG_VERSION")),
-        "Please confirm access to KeePass from SeekretService...".to_owned(),
+        text,
     );
     let result = ok_abort_window.run();
     debug!("Showed window with");
@@ -905,12 +928,22 @@ pub(crate) fn user_authorization_dialog_basic() -> bool {
 ///
 /// An HTTP response containing the decrypted secret or an error.
 #[get("/{entry_path:.*}/secret")]
-async fn get_secret(path: web::Path<(String,)>, config: web::Data<Config>) -> impl Responder {
+async fn get_secret(
+    req: HttpRequest,
+    path: web::Path<(String,)>,
+    config: web::Data<Config>,
+) -> impl Responder {
     let entry_path = path.into_inner().0.to_string();
     info!("Got request for: {}", entry_path);
 
+    let source = req
+        .headers()
+        .get("X-Seekret-Source")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_owned());
+
     // Request access from user if last authoriation has not been recently
-    if !get_user_authorization(config.get_ref()) {
+    if !get_user_authorization(config.get_ref(), source.as_deref()) {
         return HttpResponse::Unauthorized().body("Access denied by user!");
     }
 
@@ -941,12 +974,22 @@ async fn get_secret(path: web::Path<(String,)>, config: web::Data<Config>) -> im
 ///
 /// An HTTP response containing the decrypted username or an error.
 #[get("/{entry_path:.*}/username")]
-async fn get_username(path: web::Path<(String,)>, config: web::Data<Config>) -> impl Responder {
+async fn get_username(
+    req: HttpRequest,
+    path: web::Path<(String,)>,
+    config: web::Data<Config>,
+) -> impl Responder {
     let entry_path = path.into_inner().0.to_string();
     info!("Got request for: {}", entry_path);
 
+    let source = req
+        .headers()
+        .get("X-Seekret-Source")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_owned());
+
     // Request access from user if last authoriation has not been recently
-    if !get_user_authorization(config.get_ref()) {
+    if !get_user_authorization(config.get_ref(), source.as_deref()) {
         return HttpResponse::Unauthorized().body("Access denied by user!");
     }
 
@@ -980,12 +1023,22 @@ async fn get_username(path: web::Path<(String,)>, config: web::Data<Config>) -> 
 ///
 /// An HTTP response containing the decrypted SSH key PEM or an error.
 #[get("/{entry_path:.*}/ssh-key")]
-async fn get_ssh_key(path: web::Path<(String,)>, config: web::Data<Config>) -> impl Responder {
+async fn get_ssh_key(
+    req: HttpRequest,
+    path: web::Path<(String,)>,
+    config: web::Data<Config>,
+) -> impl Responder {
     let entry_path = path.into_inner().0.to_string();
     info!("Got request for: {entry_path}");
 
+    let source = req
+        .headers()
+        .get("X-Seekret-Source")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_owned());
+
     // Request access from user if last authorization has not been recently
-    if !get_user_authorization(config.get_ref()) {
+    if !get_user_authorization(config.get_ref(), source.as_deref()) {
         return HttpResponse::Unauthorized().body("Access denied by user!");
     }
 
