@@ -1,33 +1,20 @@
 = Seekret Service
+:toc: true
 
-This service exposes secrets and usernames from a KeePass database file through a webservice interface.
-This way, secrets and usernames can be queried using `curl`.
-For security reasons, data read from the KeePass database is encrypted in memory.
+Often, users store secrets unencrypted, for example in `.envrc` or `.env` files.
+Seekret Service aims to let you store secrets encrypted on your hard drive while keeping them easily and securely accessible.
 
-Since Version 1.3.0 the service also support the `ssh-agen` protocol.
-This means you can securly store your SSH keys in KeePass and acknowledge access to them manually!
+== The Solution
 
-NOTE: This is my first project in Rust.
-There may be a lot of potential for  improvements -- of which I'm happy to hear!
+This service exposes usernames, secrets and SSH keys from a KeePass database file through a webservice interface.
+This way, they can be queried using `curl`, for example.
+For security reasons, data read from the KeePass database is encrypted in memory and access to the values from the KeePass database has to be authorized by the user with a GUI dialog or other means like Touch-ID on Apple devices.
 
-IMOORTANT: Since version 1.2.6 I am using various AI models for supporting me.
-I am reviewing the code but I believe that you have the right to know that.
+Since Version 1.3.0, Seekret Service can also act as an `ssh-agent`, thus, making also access to SSH keys transparent and secure.
 
-== Motivation
-
-Usage of secrets in `direnv`:
-
-[source,bash]
-----
-GITLAB_TOKEN="$(curl --silent "http://localhost:8123/access-keys/GitLab/GitLab-API-Token-Shell/secret")"
-----
-
-The same way you may obtain the username of an entry:
-
-[source,bash]
-----
-GITLAB_TOKEN="$(curl --silent "http://localhost:8123/access-keys/GitLab/GitLab-API-Token-Shell/username")"
-----
+IMPORTANT: Since version 1.2.6, I use the support of various AI models.
+I review the code, but you have the right to know this.
+For transparency, I document in the changelog which change was created with which AI model.
 
 == Usage
 
@@ -45,7 +32,47 @@ For further help please run:
 seekret-service --help
 ----
 
-=== SSH Agent (Linux/macOS)
+After the service is started you may access it using curl:
+
+[source,bash]
+.Example for requesting the secret of entry `access-keys/GitLab/GitLab-API-Token-Shell`
+----
+curl --silent "http://localhost:8123/access-keys/GitLab/GitLab-API-Token-Shell/secret"
+----
+
+=== Providing the source of the request
+
+Sometimes you want to understand where a request came from.
+For this purpose you can add the HTTP-Header `X-Seekret-Source` when requesting something from Seekret Service.
+In consequence, the string provided is displayed in the authorization dialog to the user.
+
+[source,bash]
+.Request providing a source string describing the origin
+----
+GITLAB_TOKEN="$(curl --silent -H "X-Seekret-Source: direnv" http://localhost:8123/access-keys/GitLab/GitLab-API-Token-Shell/username")"
+----
+
+=== Usage with direnv
+
+In your `.envrc` file of `direnv` you might want to provide a secret in an environment variable the following way:
+
+[source,bash]
+.Example for providing a secret in an environment variable using `direnv` and the file `.envrc`
+----
+SOURCEINFO="direnv"
+[ -d ".git" ] && SOURCEINFO="$SOURCEINFO for $(git config --get remote.origin.url)"
+GITLAB_TOKEN="$(curl --silent -H "X-Seekret-Source: $SOURCEINFO" "http://localhost:8123/access-keys/GitLab/GitLab-API-Token-Shell/secret")"
+----
+
+The same way you may provide the username of a KeePass entry:
+
+[source,bash]
+.Example for providing a username in an environment variable using `direnv` and the file `.envrc`
+----
+GITLAB_TOKEN="$(curl --silent -H "X-Seekret-Source: $SOURCEINFO" "http://localhost:8123/access-keys/GitLab/GitLab-API-Token-Shell/username")"
+----
+
+=== Using as an SSH Agent (Linux/macOS)
 
 Seekret Service can optionally act as an SSH agent, serving SSH private keys stored in your KeePass database.
 SSH clients (e.g. `ssh`, `git`) can then authenticate using keys from KeePass without ever writing private keys to disk.
@@ -54,14 +81,15 @@ Signing requests are only allowed when the user has recently authorized access t
 
 ==== Storing SSH Keys in KeePass
 
-Store the OpenSSH PEM private key in a custom string field named `ssh-key` on a KeePass entry.
-If the key is encrypted with a passphrase, put the passphrase in the *Password* field of the same entry.
+Store the OpenSSH PEM private key in a custom string field named `ssh-key` on the KeePass entry.
+If the key is encrypted with a passphrase, put the passphrase in the password field of the same entry.
 
 ==== Starting the SSH Agent
 
 Enable the agent with `--enable-ssh-agent` and specify one or more KeePass entry paths with `--ssh-key`:
 
 [source,bash]
+.Starting Seekret Service with SSH agent enabled
 ----
 seekret-service \
   --keepass-path "/path/to/keepassfile.kdbx" \
@@ -94,7 +122,6 @@ ssh user@host       # authenticate using a KeePass-stored key
 ----
 
 NOTE: Signing requests are denied silently when the authorization timeout has expired.
-Trigger a new authorization by making an HTTP request to the service first (e.g. `curl http://localhost:8123/some-entry/secret`).
 
 == Testing
 
@@ -124,7 +151,12 @@ curl http://127.0.0.1:8124/root_entry1/secret
 
 == Release
 
+A new release is performed using `./release.sh <version-number>`.
+
+A release build can be created using the following command:
+
 [source,bash]
+.Command for creating a release binary
 ----
 cargo build --release
 ----

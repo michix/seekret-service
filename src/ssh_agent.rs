@@ -252,10 +252,19 @@ pub(crate) fn parse_ssh_string(d: &mut &[u8]) -> Option<Vec<u8>> {
 /// `Ok(body)` on HTTP 200, `Err(message)` on any error or non-200 status.
 fn http_get_localhost(port: u16, path: &str) -> Result<String, String> {
     let addr = format!("127.0.0.1:{port}");
+    let key_id = path
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .iter()
+        .rev()
+        .nth(1)
+        .copied()
+        .unwrap_or("<none>");
     let mut stream =
         TcpStream::connect(&addr).map_err(|e| format!("failed to connect to {addr}: {e}"))?;
     let request =
-        format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+        format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Seekret-Source: ssh-agent ({key_id})\r\nConnection: close\r\n\r\n");
     stream
         .write_all(request.as_bytes())
         .map_err(|e| format!("failed to send request: {e}"))?;

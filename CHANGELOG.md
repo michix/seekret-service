@@ -2,7 +2,10 @@
 
 ## Version 1
 
-- (Feature) Introduces HTTP header `X-Seekret-Source` to optionally provide a string which identifies the source of the request (with Claude Sonnet 4.6).
+### 1.4.0
+
+- (Feature) Adds the HTTP header `X-Seekret-Source`, which optionally provides a string to identify the source of the request.
+  This header is also used by `ssh-agent` (with Claude Sonnet 4.6).
 
 ### 1.3.1
 
