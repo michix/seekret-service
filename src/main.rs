@@ -248,7 +248,6 @@ static MAIN_THREAD_RX: std::sync::OnceLock<
 /// ```
 #[cfg(target_os = "macos")]
 fn install_edit_menu(mtm: objc2_foundation::MainThreadMarker) {
-    use objc2::msg_send;
     use objc2_app_kit::{NSApplication, NSMenu, NSMenuItem};
     use objc2_foundation::NSString;
     unsafe {
