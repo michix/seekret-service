@@ -36,7 +36,7 @@ zeroize = "1"
 robius-authentication = "0.1.1"
 objc2 = "0.5.2"
 objc2-foundation = { version = "0.2.2", features = ["NSRunLoop", "NSThread"] }
-objc2-app-kit = { version = "0.2.2", features = ["NSAlert", "NSApplication", "NSButton", "NSEvent", "NSResponder", "NSRunningApplication", "NSView", "NSControl", "NSTextField", "NSSecureTextField", "NSWindow", "NSWorkspace"] }
+objc2-app-kit = { version = "0.2.2", features = ["NSAlert", "NSApplication", "NSButton", "NSEvent", "NSMenu" , "NSMenuItem", "NSResponder", "NSRunningApplication", "NSView", "NSControl", "NSTextField", "NSSecureTextField", "NSWindow", "NSWorkspace"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winsafe = { version = "0.0.24", features = ["gui"] }
