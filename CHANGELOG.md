@@ -6,6 +6,7 @@
 
 - (Feature) Adds the HTTP header `X-Seekret-Source`, which optionally provides a string to identify the source of the request.
   This header is also used by `ssh-agent` (with Claude Sonnet 4.6).
+- (Fix) Corrects non-working pasting into password field on MacOS (with Claude Sonnet 4.6).
 - (Chore) Updates dependencies.
 
 ### 1.3.1

@@ -210,6 +210,89 @@ static MAIN_THREAD_RX: std::sync::OnceLock<
     std::sync::Mutex<std::sync::mpsc::Receiver<Box<dyn FnOnce() + Send>>>,
 > = std::sync::OnceLock::new();
 
+/// Installs a minimal main menu with an Edit menu on MacOS.
+///
+/// This function is a workaround to enable standard keyboard shortcuts
+/// (such as <kbd>Command+V</kbd> for paste) in password input fields,
+/// which require an Edit menu to be present in the application menu bar.
+///
+/// # Arguments
+///
+/// * `mtm` - The `MainThreadMarker` required for AppKit operations.
+///
+/// # Platform
+///
+/// Only available on MacOS (`#[cfg(target_os = "macos")]`).
+///
+/// # Safety
+///
+/// This function performs unsafe operations with the Objective-C runtime.
+///
+/// # Implementation Notes
+///
+/// - Does nothing if a main menu already exists.
+/// - Adds an application menu (required by AppKit) and an Edit menu with
+///   standard items: Cut, Copy, Paste, Select All, Undo.
+/// - Each menu item is bound to the corresponding selector and key equivalent.
+///
+/// # Hack
+///
+/// This is a hack to work around the lack of default Edit menu in custom
+/// password dialogs, ensuring that Command-based shortcuts work as expected.
+///
+/// # Example
+///
+/// ```rust
+/// #[cfg(target_os = "macos")]
+/// install_edit_menu(mtm);
+/// ```
+#[cfg(target_os = "macos")]
+fn install_edit_menu(mtm: objc2_foundation::MainThreadMarker) {
+    use objc2::msg_send;
+    use objc2_app_kit::{NSApplication, NSMenu, NSMenuItem};
+    use objc2_foundation::NSString;
+    unsafe {
+        let app = NSApplication::sharedApplication(mtm);
+        // Do nothing if a main menu already exists
+        if app.mainMenu().is_some() {
+            return;
+        }
+        let main_menu = NSMenu::new(mtm);
+        // Slot 0: application menu (required by AppKit)
+        let app_item = NSMenuItem::new(mtm);
+        main_menu.addItem(&app_item);
+        let app_menu = NSMenu::new(mtm);
+        app_item.setSubmenu(Some(&app_menu));
+        // Edit menu
+        let edit_item = NSMenuItem::initWithTitle_action_keyEquivalent(
+            mtm.alloc(),
+            &NSString::from_str("Edit"),
+            None,
+            &NSString::from_str(""),
+        );
+        main_menu.addItem(&edit_item);
+        let edit_menu = NSMenu::initWithTitle(mtm.alloc(), &NSString::from_str("Edit"));
+        edit_item.setSubmenu(Some(&edit_menu));
+        for (title, sel_name, key) in [
+            ("Cut",        "cut:",       "x"),
+            ("Copy",       "copy:",      "c"),
+            ("Paste",      "paste:",     "v"),
+            ("Select All", "selectAll:", "a"),
+            ("Undo",       "undo:",      "z"),
+        ] {
+            let sel = objc2::runtime::Sel::register(sel_name);
+            let item = NSMenuItem::initWithTitle_action_keyEquivalent(
+                mtm.alloc(),
+                &NSString::from_str(title),
+                Some(sel),
+                &NSString::from_str(key),
+            );
+            edit_menu.addItem(&item);
+        }
+        app.setMainMenu(Some(&main_menu));
+    }
+}
+
 /// Initializes NSApplication with the Accessory activation policy.
 ///
 /// Must be called on the main thread before entering CFRunLoopRun so that
@@ -223,6 +306,7 @@ fn init_nsapplication() {
     let mtm = unsafe { MainThreadMarker::new_unchecked() };
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+    install_edit_menu(mtm);
 }
 
 /// Runs the main thread run loop on macOS, draining work items from the
@@ -646,6 +730,7 @@ pub(crate) fn get_password_from_user() -> String {
             let window = alert.window();
             let input_ref: &NSSecureTextField = &input;
             let _: () = msg_send![&window, setInitialFirstResponder: input_ref];
+            let _: bool = msg_send![input_ref, becomeFirstResponder];
 
             let response = alert.runModal();
             if response == NSAlertFirstButtonReturn {
