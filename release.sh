@@ -32,7 +32,7 @@ git add Cargo.toml
 git commit -m "internal: prepares version $VERSION"
 
 # 5. Ask user to confirm
-read -r "About to tag and push version $VERSION. Press <enter> to continue..."
+read -r -p "About to tag and push version $VERSION. Press <enter> to continue..."
 
 # 6. Set git tag
 git tag "$TAG"
