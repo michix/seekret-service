@@ -674,7 +674,7 @@ pub(crate) fn get_password_from_user() -> String {
         use objc2::msg_send;
         use objc2::sel;
         use objc2_app_kit::{
-            NSAlert, NSAlertFirstButtonReturn, NSApplication, NSApplicationActivationOptions,
+            NSAlert, NSApplication, NSApplicationActivationOptions,
             NSRunningApplication, NSSecureTextField, NSWorkspace,
         };
         use objc2_foundation::{MainThreadMarker, NSString};
@@ -731,12 +731,9 @@ pub(crate) fn get_password_from_user() -> String {
             let _: () = msg_send![&window, setInitialFirstResponder: input_ref];
             let _: bool = msg_send![input_ref, becomeFirstResponder];
 
-            let response = alert.runModal();
-            if response == NSAlertFirstButtonReturn {
-                String::new()
-            } else {
-                input.stringValue().to_string()
-            }
+
+            alert.runModal();
+            input.stringValue().to_string()
         };
 
         // Restore focus to the application that was active before the dialog.
