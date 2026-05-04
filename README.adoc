@@ -40,6 +40,8 @@ After the service is started you may access it using curl:
 curl --silent "http://localhost:8123/access-keys/GitLab/GitLab-API-Token-Shell/secret"
 ----
 
+NOTE: If MacOS does not want to start the release binary because it is not able to check if it contains malware, you can remove the binary from quarantine using the following command: `xattr -dr com.apple.quarantine`.
+
 === Providing the source of the request
 
 Sometimes you want to understand where a request came from.
