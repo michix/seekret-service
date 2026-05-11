@@ -108,7 +108,7 @@ You can override the socket path with `--ssh-agent-sock`:
 seekret-service \
   --keepass-path "/path/to/keepassfile.kdbx" \
   --enable-ssh-agent \
-  --ssh-key "my-ssh-key" \
+  --ssh-key "path/to/ssh-key-entry" \
   --ssh-agent-sock /tmp/my-custom-agent.sock
 ----
 
