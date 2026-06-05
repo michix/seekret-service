@@ -15,6 +15,7 @@ use core::panic;
 use keepass::{db::NodeRef, error::DatabaseOpenError, Database, DatabaseKey};
 use log::{debug, info};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use serde::de;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::Path;
@@ -23,6 +24,7 @@ use std::process::Command;
 use std::str;
 use std::sync::Mutex;
 use std::thread;
+use std::time;
 use std::{fs::File, path::PathBuf};
 use std::{io, mem};
 
@@ -44,6 +46,9 @@ const KEY_SSH_KEY: &str = "SSH";
 const KEY_NONCE: &str = "NON";
 
 static RESETCACHE: Mutex<bool> = Mutex::new(false);
+
+/// Stores the md5 hash of the KeePass file from the last successful cache load.
+static LAST_KDBX_HASH: Mutex<Option<[u8; 16]>> = Mutex::new(None);
 
 /// Tracks the last time the user authorized access. Shared between HTTP handlers
 /// and the SSH agent thread. Initialized to one hour in the past so the first
@@ -273,11 +278,11 @@ fn install_edit_menu(mtm: objc2_foundation::MainThreadMarker) {
         let edit_menu = NSMenu::initWithTitle(mtm.alloc(), &NSString::from_str("Edit"));
         edit_item.setSubmenu(Some(&edit_menu));
         for (title, sel_name, key) in [
-            ("Cut",        "cut:",       "x"),
-            ("Copy",       "copy:",      "c"),
-            ("Paste",      "paste:",     "v"),
+            ("Cut", "cut:", "x"),
+            ("Copy", "copy:", "c"),
+            ("Paste", "paste:", "v"),
             ("Select All", "selectAll:", "a"),
-            ("Undo",       "undo:",      "z"),
+            ("Undo", "undo:", "z"),
         ] {
             let sel = objc2::runtime::Sel::register(sel_name);
             let item = NSMenuItem::initWithTitle_action_keyEquivalent(
@@ -445,17 +450,44 @@ fn get_entry_from_keepass_cache(
     debug!("Obtaining secret '{}' from KeePass cache...", entry_path);
     let reset_cache = RESETCACHE.lock().unwrap().to_owned();
     // Check if last access is too long ago
-    if reset_cache
-        || LAST_KEEPASS_ACCESS.get().timestamp_millis()
-            < (Utc::now() - Duration::hours(config.timeout_keepass_cache_in_hours))
-                .timestamp_millis()
-    {
-        debug!("Resetting KeePass cache because of timeout");
+    let timed_out = LAST_KEEPASS_ACCESS.get().timestamp_millis()
+        < (Utc::now() - Duration::hours(config.timeout_keepass_cache_in_hours)).timestamp_millis();
+
+    if reset_cache || timed_out {
+        if reset_cache {
+            debug!("Resetting KeePass cache because KeePass file changed (file watcher event or manual reset)");
+        }
+        if timed_out {
+            let last_access = LAST_KEEPASS_ACCESS.get();
+            let now = Utc::now();
+            debug!("Resetting KeePass cache because of timeout. last_access = {:?}, now = {:?}, timeout_keepass_cache_in_hours = {}", last_access, now, config.timeout_keepass_cache_in_hours);
+        }
         empty_keepass_cache();
     }
     let mut secrets_map = SECRETS_MAP.take();
     if secrets_map.is_empty() {
         secrets_map = fill_keepass_cache(config).expect("Filling KeePass cache failed");
+
+        // Update last known hash after successful reload of the cache
+        let kdbx_path = &config.keepass_path;
+        match md5_of_file(kdbx_path) {
+            Ok(new_hash) => {
+                let mut hash_guard = LAST_KDBX_HASH.lock().unwrap();
+                *hash_guard = Some(new_hash);
+                debug!(
+                    "Updated LAST_KDBX_HASH to {:?} after cache reload",
+                    new_hash
+                );
+            }
+            Err(e) => {
+                debug!(
+                    "Failed to compute KeePass file hash on cache reload: {:?}",
+                    e
+                );
+                let mut hash_guard = LAST_KDBX_HASH.lock().unwrap();
+                *hash_guard = None;
+            }
+        }
     }
     let mut values: Option<HashMap<String, Vec<u8>>> = None;
     if secrets_map.contains_key(entry_path) {
@@ -674,8 +706,8 @@ pub(crate) fn get_password_from_user() -> String {
         use objc2::msg_send;
         use objc2::sel;
         use objc2_app_kit::{
-            NSAlert, NSApplication, NSApplicationActivationOptions,
-            NSRunningApplication, NSSecureTextField, NSWorkspace,
+            NSAlert, NSApplication, NSApplicationActivationOptions, NSRunningApplication,
+            NSSecureTextField, NSWorkspace,
         };
         use objc2_foundation::{MainThreadMarker, NSString};
 
@@ -730,7 +762,6 @@ pub(crate) fn get_password_from_user() -> String {
             let input_ref: &NSSecureTextField = &input;
             let _: () = msg_send![&window, setInitialFirstResponder: input_ref];
             let _: bool = msg_send![input_ref, becomeFirstResponder];
-
 
             alert.runModal();
             input.stringValue().to_string()
@@ -832,8 +863,7 @@ pub(crate) fn user_authorization_dialog_touchid(source: Option<&str>) -> bool {
             description: Some(&subtitle),
         },
         apple: &title,
-        windows: WindowsText::new(&title, &subtitle)
-            .expect("Cannot create Windows Text"),
+        windows: WindowsText::new(&title, &subtitle).expect("Cannot create Windows Text"),
     };
 
     // Remember the frontmost application so focus can be restored afterward.
@@ -981,9 +1011,9 @@ pub(crate) fn user_authorization_dialog_basic(source: Option<&str>) -> bool {
 pub(crate) fn user_authorization_dialog_basic(source: Option<&str>) -> bool {
     debug!("Querying user for authorization...");
     let text = match source {
-        Some(s) => format!(
-            "Please confirm access to KeePass from SeekretService...\n\nRequested by: {s}"
-        ),
+        Some(s) => {
+            format!("Please confirm access to KeePass from SeekretService...\n\nRequested by: {s}")
+        }
         None => "Please confirm access to KeePass from SeekretService...".to_owned(),
     };
     let ok_abort_window = &OkAbortWindow::new(
@@ -1152,16 +1182,37 @@ async fn get_ssh_key(
 /// # Returns
 ///
 /// A `notify::Result<()>` indicating success or failure.
+fn md5_of_file(path: &Path) -> io::Result<[u8; 16]> {
+    debug!("Calculating MD5 hash of: {:?}", path);
+    thread::sleep(time::Duration::from_seconds(1));
+    use std::io::Read;
+    let mut file = File::open(path)?;
+    let mut hasher = md5::Context::new();
+    let mut buffer = [0u8; 4096];
+    loop {
+        let n = file.read(&mut buffer)?;
+        if n == 0 {
+            break;
+        }
+        hasher.consume(&buffer[..n]);
+    }
+    let result = hasher.finalize().0;
+    debug!("Got hash: {:?}", result);
+    Ok(result)
+}
+
 fn watch<P: AsRef<Path>>(path: P) -> notify::Result<()> {
+    let watched_path = path.as_ref().to_path_buf();
+    let watched_path_canonical = watched_path.canonicalize().ok();
+
     let (tx, rx) = std::sync::mpsc::channel();
 
     // Automatically select the best implementation for your platform.
     // You can also access each implementation directly e.g. INotifyWatcher.
     let mut watcher = RecommendedWatcher::new(tx, notify::Config::default())?;
 
-    // Add a path to be watched. All files and directories at that path and
-    // below will be monitored for changes.
-    watcher.watch(path.as_ref(), RecursiveMode::Recursive)?;
+    // Add the KeePass file to be watched.
+    watcher.watch(&watched_path, RecursiveMode::NonRecursive)?;
 
     for res in rx {
         match res {
@@ -1169,12 +1220,55 @@ fn watch<P: AsRef<Path>>(path: P) -> notify::Result<()> {
                 debug!("File watcher event: {:?}", event);
                 match event.kind {
                     EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) => {
-                        info!(
-                            "KeePass file changed ({:?}), flagging cache for reset",
-                            event.kind
-                        );
-                        let mut guard = RESETCACHE.lock().unwrap();
-                        let _ = mem::replace(&mut *guard, true);
+                        let relevant_event = if event.paths.is_empty() {
+                            true
+                        } else {
+                            event.paths.iter().any(|event_path| {
+                                if event_path == &watched_path {
+                                    return true;
+                                }
+                                match (
+                                    watched_path_canonical.as_ref(),
+                                    event_path.canonicalize().ok().as_ref(),
+                                ) {
+                                    (Some(left), Some(right)) => left == right,
+                                    _ => false,
+                                }
+                            })
+                        };
+
+                        if !relevant_event {
+                            debug!(
+                                "Ignoring watcher event for unrelated path(s): {:?}",
+                                event.paths
+                            );
+                            continue;
+                        }
+
+                        let loaded_hash = *LAST_KDBX_HASH.lock().unwrap();
+                        let current_hash = md5_of_file(path.as_ref()).ok();
+
+                        let has_changed_since_load = match (loaded_hash, current_hash) {
+                            (Some(previous), Some(current)) => previous != current,
+                            (Some(_), None) => true,
+                            (None, _) => false,
+                        };
+
+                        if has_changed_since_load {
+                            info!(
+                                "KeePass file content changed since last cache load. loaded_hash={:?}, current_hash={:?}; flagging cache reset",
+                                loaded_hash,
+                                current_hash
+                            );
+                            let mut guard = RESETCACHE.lock().unwrap();
+                            let _ = mem::replace(&mut *guard, true);
+                        } else {
+                            debug!(
+                                "KeePass watcher event without content change since last cache load. loaded_hash={:?}, current_hash={:?}",
+                                loaded_hash,
+                                current_hash
+                            );
+                        }
                     }
                     _ => {
                         debug!("Ignoring non-modification file event: {:?}", event.kind);

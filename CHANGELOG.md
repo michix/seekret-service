@@ -2,6 +2,10 @@
 
 ## Version 1
 
+### 1.4.1
+
+- (Fix) Fixes Bug with triggers wrong filesystem triggers, that the file has changed by hashing the KeePass file (and waiting one second)
+
 ### 1.4.0
 
 - (Feature) Adds the HTTP header `X-Seekret-Source`, which optionally provides a string to identify the source of the request.
