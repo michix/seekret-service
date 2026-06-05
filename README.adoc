@@ -16,6 +16,20 @@ IMPORTANT: Since version 1.2.6, I use the support of various AI models.
 I review the code, but you have the right to know this.
 For transparency, I document in the changelog which change was created with which AI model.
 
+== Installation
+
+You can download the release binaries and copy them into your path.
+
+=== Homebrew
+
+If you are using Homebrew you can install Seekret Service the following way:
+
+[source,bash]
+----
+brew tap michix/homebrew-tap
+brew install seekret-service
+----
+
 == Usage
 
 You may want to start the service in background using the following command:
