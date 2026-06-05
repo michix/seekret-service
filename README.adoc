@@ -185,6 +185,39 @@ This script will:
 
 After running the script, review the changes and update `CHANGELOG.md` if needed.
 
+== Security Considerations
+
+=== Encryption
+
+* All cached secrets are encrypted in memory using ChaCha20Poly1305 with random nonces.
+* The encryption key is derived from the KeePass database password and keyfile (if provided).
+* Secrets are never stored in plaintext in memory or on disk.
+
+=== Authorization
+
+* Time-based authorization gating applies to both HTTP and SSH agent requests.
+* Users must authorize access through platform-specific dialogs when requesting secrets.
+* Authorization timeout ensures that even if a secret is cached, it cannot be accessed indefinitely.
+
+=== Secure Storage
+
+* The KeePass database file itself remains encrypted on disk.
+* Only the specific secrets requested by the user are decrypted on-the-fly in memory.
+* SSH agent socket permissions are set to `0600` (readable/writable only by owner).
+* Stale sockets are cleaned up on start/exit to prevent reuse.
+
+=== Access Control
+
+* HTTP API endpoints require user authorization before returning secrets.
+* SSH agent functionality only allows signing when recent authorization has occurred.
+* Platform-specific dialogs (Touch ID on macOS, Windows GUI, and `zenity` on Linux) are used for authentication.
+
+=== Additional Security Practices
+
+* Cache is cleared when the KeePass file changes (MD5 checksums are used here) or after timeout periods.
+* No passwords or secrets are logged to console or files (only lengths are logged in DEBUG mode for bug hunting).
+* The service runs with minimal required permissions and access.
+
 == Compiling
 
 === Windows
