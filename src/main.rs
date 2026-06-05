@@ -15,7 +15,6 @@ use core::panic;
 use keepass::{db::NodeRef, error::DatabaseOpenError, Database, DatabaseKey};
 use log::{debug, info};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use serde::de;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::Path;
@@ -1184,7 +1183,7 @@ async fn get_ssh_key(
 /// A `notify::Result<()>` indicating success or failure.
 fn md5_of_file(path: &Path) -> io::Result<[u8; 16]> {
     debug!("Calculating MD5 hash of: {:?}", path);
-    thread::sleep(time::Duration::from_seconds(1));
+    thread::sleep(time::Duration::from_secs(1));
     use std::io::Read;
     let mut file = File::open(path)?;
     let mut hasher = md5::Context::new();
